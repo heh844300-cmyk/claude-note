@@ -1,0 +1,19 @@
+# ---- personal data: never commit ----
+config.json
+config.*.json
+*.local.md
+mobile/data/
+mobile/logs/
+syncthing/gui-password.txt
+
+# ---- large / machine-specific ----
+tools/
+sandbox/clean.tar
+sandbox/disk/
+node_modules/
+
+# ---- misc ----
+*.bak
+*.tmp
+Thumbs.db
+desktop.ini

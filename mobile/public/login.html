@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#5b4bdb">
+<title>登入｜Claude 筆記</title>
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Claude 筆記</h1></header>
+<main class="login">
+  <h2>用信任的手機掃描登入</h2>
+  <div id="qrBox" class="qr"><p class="hint">產生中…</p></div>
+  <p id="loginState" class="hint">剩餘 <span id="left">120</span> 秒</p>
+  <button type="button" id="again" class="primary" hidden>重新產生 QR code</button>
+  <ol class="steps">
+    <li>用已經登入過的手機，或開著 Tailscale 的手機，掃描上面的 QR code</li>
+    <li>手機上確認裝置資訊後，按「允許登入」</li>
+    <li>這個畫面會自動進入筆記</li>
+  </ol>
+  <p class="hint">每次的 QR code 都是隨機產生，只能用一次，2 分鐘後失效。</p>
+</main>
+<script src="login.js"></script>
+</body>
+</html>

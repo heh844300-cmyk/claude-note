@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#5b4bdb">
+<title>核准登入｜Claude 筆記</title>
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Claude 筆記</h1></header>
+<main class="login">
+  <h2>有裝置要求登入</h2>
+  <div id="info" class="box"><p class="hint">讀取中…</p></div>
+  <p class="warn">只在「你自己剛剛」在那台裝置上打開登入頁時才允許。如果有人傳 QR code 給你掃，一律拒絕。</p>
+  <div class="actions" id="btns" hidden>
+    <button type="button" id="deny" class="danger">拒絕</button>
+    <button type="button" id="allow" class="primary">允許登入</button>
+  </div>
+  <p id="result" class="status" hidden></p>
+</main>
+<script src="approve.js"></script>
+</body>
+</html>

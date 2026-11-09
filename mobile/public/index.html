@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#5b4bdb">
+<title>Claude 筆記</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Claude 筆記</h1>
+  <nav>
+    <button data-tab="new" class="active">新增</button>
+    <button data-tab="drafts">草稿 <span id="draftCount" class="badge" hidden></span></button>
+    <button data-tab="notes">已上傳</button>
+  </nav>
+</header>
+
+<main>
+  <!-- 新增 -->
+  <section id="tab-new" class="tab">
+    <form id="newForm">
+      <textarea id="newText" name="text" rows="9" placeholder="輸入或貼上筆記、想法…&#10;（可以用鍵盤上的麥克風語音輸入）"></textarea>
+      <div class="pickers">
+        <label class="pick">📷 照片<input type="file" id="pickImg" accept="image/*" multiple></label>
+        <label class="pick">🎙️ 錄音檔<input type="file" id="pickAud" accept="audio/*,.m4a,.mp3,.wav,.ogg,.amr,.aac" multiple></label>
+        <label class="pick">📄 文字檔<input type="file" id="pickTxt" accept=".txt,.md,text/plain" multiple></label>
+      </div>
+      <ul id="fileList" class="files"></ul>
+      <button type="submit" class="primary" id="submitBtn">交給 Claude 整理</button>
+      <p class="hint">送出後可以關掉 app，整理好的草稿會出現在「草稿」。</p>
+    </form>
+    <div class="box notif">
+      <div class="row"><span class="lbl">🔔 提醒通知</span><span id="notifState" class="hint"></span></div>
+      <div class="row gap"><button type="button" id="notifBtn">開啟通知</button><button type="button" id="notifTest">傳送測試通知</button></div>
+    </div>
+    <div class="box">
+      <div class="row"><span class="lbl">🔐 公開網址登入的裝置</span><span id="entryState" class="hint"></span></div>
+      <ul id="sessList" class="sess"></ul>
+      <button type="button" id="logoutBtn" hidden>登出這台裝置</button>
+    </div>
+  </section>
+
+  <!-- 草稿列表 -->
+  <section id="tab-drafts" class="tab" hidden>
+    <ul id="draftList" class="list"></ul>
+    <p id="draftEmpty" class="empty" hidden>目前沒有草稿</p>
+  </section>
+
+  <!-- 草稿編輯 -->
+  <section id="tab-edit" class="tab" hidden>
+    <button class="back" data-back="drafts">← 草稿</button>
+    <div id="editStatus" class="status" hidden></div>
+    <div id="editImages" class="thumbs"></div>
+    <label class="field">標題<input id="edTitle" type="text"></label>
+    <label class="field">標籤（用逗號分隔）<input id="edTags" type="text"></label>
+    <div class="box">
+      <div class="row">
+        <span class="lbl">🗑️ 自動刪除</span>
+        <select id="edExpMode"><option value="never">永久保留</option><option value="at">到期後移到垃圾桶</option></select>
+      </div>
+      <input id="edExpires" type="datetime-local" hidden>
+      <div class="row top"><span class="lbl">⏰ 提醒</span><button type="button" id="addRem" class="small">＋ 新增</button></div>
+      <ul id="remList" class="rems"></ul>
+      <label class="check"><input type="checkbox" id="edAgent"> 🔎 上傳後讓 Agent 查資料（處理待辦與待釐清問題）</label>
+      <p id="timeWarn" class="warn" hidden></p>
+      <p id="edModel" class="hint left"></p>
+    </div>
+    <div class="seg">
+      <button id="modeEdit" class="active" type="button">編輯</button>
+      <button id="modePreview" type="button">預覽</button>
+    </div>
+    <textarea id="edBody" rows="18"></textarea>
+    <div id="edPreview" class="md" hidden></div>
+    <details id="edRaw"><summary>原始內容</summary><pre id="edRawText"></pre></details>
+    <div class="revise">
+      <textarea id="reviseText" rows="2" placeholder="請 Claude 修改，例如：待辦多列一點、摘要縮短"></textarea>
+      <button id="reviseBtn" type="button">請 Claude 修改</button>
+    </div>
+    <div class="actions">
+      <button id="saveBtn" type="button">儲存</button>
+      <button id="uploadBtn" type="button" class="primary">上傳到 Obsidian</button>
+    </div>
+    <button id="deleteBtn" type="button" class="danger">刪除草稿</button>
+  </section>
+
+  <!-- 已上傳列表 -->
+  <section id="tab-notes" class="tab" hidden>
+    <div class="seg" id="noteSeg">
+      <button type="button" data-f="mine" class="active">我的筆記</button>
+      <button type="button" data-f="research">🔎 研究</button>
+    </div>
+    <ul id="noteList" class="list"></ul>
+    <p id="noteEmpty" class="empty" hidden>還沒有上傳的筆記</p>
+  </section>
+
+  <!-- 閱讀筆記 -->
+  <section id="tab-read" class="tab" hidden>
+    <button class="back" data-back="notes">← 已上傳</button>
+    <div id="agentBox" class="box">
+      <div class="row"><span class="lbl">🔎 Agent</span><span id="agentState" class="hint"></span></div>
+      <button type="button" id="agentBtn">讓 Agent 查資料</button>
+    </div>
+    <article id="readBody" class="md"></article>
+  </section>
+</main>
+
+<div id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
