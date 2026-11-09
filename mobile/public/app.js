@@ -355,6 +355,10 @@ function startKiosk(me) {
   $('#kioskText').textContent = `🖥️ 公用電腦模式・${String(until.getHours()).padStart(2, '0')}:${String(until.getMinutes()).padStart(2, '0')} 前有效・閒置 15 分鐘自動登出・用完請按登出`;
   $('#kioskBar').hidden = false;
   document.querySelectorAll('.box.notif, #sessList').forEach((el) => { const b = el.closest('.box') || el; b.hidden = true; });
+  // view only (the server refuses any change): hide adding / drafts, open the vault
+  document.querySelectorAll('nav button[data-tab="new"], nav button[data-tab="drafts"]').forEach((b) => (b.hidden = true));
+  $('#agentBox').hidden = true;
+  if (current === 'new' || current === 'drafts' || current === 'edit') show('vault');
   let last = Date.now();
   for (const ev of ['click', 'keydown', 'scroll', 'touchstart', 'mousemove']) addEventListener(ev, () => { last = Date.now(); }, { passive: true });
   setInterval(() => { if (Date.now() - last > 15 * 60 * 1000 || Date.now() > until.getTime()) logout(); }, 30000);

@@ -887,7 +887,8 @@ async function route(req, res) {
           if (!rel) return send(res, 404, { error: 'not found' });
           const f = vault.raw(rel);
           const buf = await fsp.readFile(f.abs).catch(() => null);
-          return buf ? send(res, 200, buf, f.type) : send(res, 404, { error: 'not found' }); // no-store: nothing left behind on a public computer
+          // no-store: nothing left behind on a public computer; CSP sandbox: an SVG opened directly cannot run script on this origin
+          return buf ? send(res, 200, buf, f.type, { 'Content-Security-Policy': 'sandbox', 'X-Content-Type-Options': 'nosniff' }) : send(res, 404, { error: 'not found' });
         }
       } catch (e) {
         if (e.status) throw httpErr(e.status, e.message);
@@ -945,6 +946,11 @@ async function publicRoute(req, res) {
     if (pn.startsWith('/api/')) return send(res, 401, { error: '請先登入', login: true });
     if (M === 'GET' || M === 'HEAD') { res.writeHead(302, { Location: '/login.html', 'Cache-Control': 'no-store' }); return res.end(); }
     return send(res, 401, { error: '請先登入', login: true });
+  }
+  // public computer = view only, enforced here (not just hidden in the UI): no writes, no approving other logins,
+  // no push, no draft/Agent actions, no peeking at the device list. /auth/logout is handled above.
+  if (s.kiosk && ((M !== 'GET' && M !== 'HEAD') || pn.startsWith('/api/auth/sessions'))) {
+    return send(res, 403, { error: '公用電腦模式只能瀏覽' });
   }
   req.publicSession = s;
   return route(req, res);
