@@ -26,6 +26,11 @@ $Pre = @{}
 if ($Answers) { (Get-Content -LiteralPath $Answers -Raw -Encoding UTF8 | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $Pre[$_.Name] = $_.Value } }
 
 function Say($t, $c = "Gray") { Write-Host $t -ForegroundColor $c }
+# run a program and capture stdout+stderr as text (PowerShell 5.1 turns stderr into errors under "Stop")
+function Run-Capture($exe, [string[]]$argv) {
+    $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try { return ((& $exe @argv 2>&1 | ForEach-Object { "$_" }) -join "`n") } finally { $ErrorActionPreference = $old }
+}
 function Title($t) { Write-Host ""; Write-Host "==== $t ====" -ForegroundColor Cyan }
 function Ask($key, $prompt, $default = "") {
     if ($Pre.ContainsKey($key)) { $v = [string]$Pre[$key]; Say "$prompt $v" DarkGray; return $v }
@@ -98,6 +103,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $vault ".obsidian"))) { Say "提醒�
 Title "3/6 選擇 AI"
 $providers = @(
     "Claude 訂閱（用 Claude Code 登入，不需要 API 金鑰）",
+    "ChatGPT 訂閱（用 Codex CLI 登入，不需要 API 金鑰）",
     "OpenAI（API 金鑰）",
     "Google Gemini（API 金鑰）",
     "Ollama 本機模型（免費，在這台電腦上跑，需要先安裝 Ollama 並下載模型）",
@@ -140,13 +146,34 @@ if ($p -eq 1) {
     Say "如果還沒登入：請另外開一個 PowerShell 視窗，輸入 claude 並照畫面登入你的 Claude 帳號，完成後回到這裡。" Yellow
     [void](Ask "claudeLoggedIn" "已經登入就按 Enter 繼續")
     $cfg.smallModel = "haiku"; $cfg.bigModel = "sonnet"; $cfg.agentModel = "sonnet"; $cfg.librarianModel = "haiku"
+} elseif ($p -eq 2) {
+    $cfg.provider = "codex"
+    $codexJs = Join-Path $env:APPDATA "npm\node_modules\@openai\codex\bin\codex.js"
+    if (-not (Test-Path $codexJs)) {
+        Say "這台電腦還沒有 Codex CLI。"
+        if (YesNo "installCodex" "要用 npm 安裝 OpenAI 官方的 Codex CLI（npm install -g @openai/codex）嗎？") {
+            & npm install -g @openai/codex
+        }
+        if (-not (Test-Path $codexJs)) { Say "找不到 Codex CLI。請安裝後重新執行 setup.cmd。" Red; exit 1 }
+    }
+    $cfg.codex = $codexJs
+    $st = (Run-Capture node @($codexJs, "login", "status"))
+    while ($st -notmatch 'Logged in') {
+        Say "Codex 還沒登入。請另外開一個 PowerShell 視窗，輸入 codex login，選擇用 ChatGPT 帳號登入（會開瀏覽器），完成後回到這裡。" Yellow
+        [void](Ask "codexLoggedIn" "登入完成後按 Enter 繼續")
+        $st = (Run-Capture node @($codexJs, "login", "status"))
+        if ($Pre.ContainsKey("codexLoggedIn") -and $st -notmatch 'Logged in') { throw "Codex 沒有登入" }
+    }
+    Say ("Codex：" + $st.Trim()) Green
+    # blank model = Codex's default model for your plan
+    $cfg.smallModel = ""; $cfg.bigModel = ""; $cfg.agentModel = ""; $cfg.librarianModel = ""; $cfg.vision = $true
 } else {
     $cfg.provider = "openai"
     switch ($p) {
-        2 { $base = "https://api.openai.com/v1"; $needKey = $true; Say "金鑰在 https://platform.openai.com/api-keys 建立（需要先儲值）。" }
-        3 { $base = "https://generativelanguage.googleapis.com/v1beta/openai/"; $needKey = $true; Say "金鑰在 https://aistudio.google.com/apikey 建立。" }
-        4 { $base = "http://127.0.0.1:11434/v1"; $needKey = $false; Say "請先安裝 Ollama（https://ollama.com），並用 ollama pull <模型> 下載模型，例如支援工具呼叫的 qwen3 或 llama3.1。" }
-        5 { $base = Ask "apiBaseUrl" "服務的 API 網址（例如 https://openrouter.ai/api/v1）"; $needKey = $true }
+        3 { $base = "https://api.openai.com/v1"; $needKey = $true; Say "金鑰在 https://platform.openai.com/api-keys 建立（需要先儲值）。" }
+        4 { $base = "https://generativelanguage.googleapis.com/v1beta/openai/"; $needKey = $true; Say "金鑰在 https://aistudio.google.com/apikey 建立。" }
+        5 { $base = "http://127.0.0.1:11434/v1"; $needKey = $false; Say "請先安裝 Ollama（https://ollama.com），並用 ollama pull <模型> 下載模型，例如支援工具呼叫的 qwen3 或 llama3.1。" }
+        6 { $base = Ask "apiBaseUrl" "服務的 API 網址（例如 https://openrouter.ai/api/v1）"; $needKey = $true }
     }
     $key = ""
     if ($needKey) { while (-not $key) { $key = AskSecret "apiKey" "請貼上 API 金鑰（畫面不會顯示）" } }
@@ -169,6 +196,7 @@ if ($p -eq 1) {
     } else { $cfg.search = [ordered]@{ provider = ""; apiKey = "" } }
 }
 if ($p -eq 1) { Title "4/6 Agent 的網路搜尋"; Say "Claude Code 內建網路搜尋，不用另外設定。" }
+if ($p -eq 2) { Title "4/6 Agent 的網路搜尋"; Say "Codex 內建網路搜尋（在 OpenAI 的伺服器上執行），不用另外設定。" }
 
 # keep settings this wizard doesn't ask about (e.g. phone / public entrance) when re-running
 if (Test-Path -LiteralPath $ConfigOut) {
@@ -183,7 +211,7 @@ Say "設定已寫入 $ConfigOut" Green
 # ---------- 5. test ----------
 Title "5/6 測試 AI 連線"
 $env:CN_CONFIG = $ConfigOut; $env:CN_SELFTEST = "1"
-$out = & node (Join-Path $Mobile "server.js") 2>&1 | Out-String
+$out = Run-Capture node @((Join-Path $Mobile "server.js"))
 Remove-Item Env:CN_SELFTEST; Remove-Item Env:CN_CONFIG
 $res = $null; try { $res = ($out.Trim().Split("`n")[-1]) | ConvertFrom-Json } catch {}
 if (-not $res -or -not $res.ok) {

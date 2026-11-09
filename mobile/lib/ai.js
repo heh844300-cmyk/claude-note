@@ -12,8 +12,33 @@ const web = require('./webtools');
 
 const MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.heic': 'image/heic' };
 
+// Codex CLI: every local capability off (no shell, no file reading, no images from disk, no browser/apps/plugins/hooks,
+// no user config / MCP). Verified on codex-cli 0.160.0 with an adversarial prompt: no tool can read files or run
+// commands; code mode stays on because web search runs through it, and its JS has no require/fetch/process (a canary
+// file was not read, a local canary server got no connection). Only the hosted web_search remains when --search is
+// given; it runs on OpenAI's servers, so it cannot reach this machine. Re-check this after major Codex updates.
+const CODEX_OFF = ['shell_tool', 'unified_exec', 'view_image', 'apps', 'plugins', 'browser_use', 'browser_use_external',
+  'computer_use', 'in_app_browser', 'hooks'].flatMap((f) => ['--disable', f]);
+
 function createAI({ CFG, run, log }) {
   const claudeBase = ['--restricted', '--strict-mcp-config', '--permission-mode', 'dontAsk'];
+
+  // ---------- Codex CLI (ChatGPT subscription) ----------
+  let codexSeq = 0;
+  async function codex({ prompt, model, images = [], search = false, timeoutMs }) {
+    if (!CFG.codex || !fs.existsSync(CFG.codex)) throw new Error('找不到 Codex CLI（config.json 的 "codex"），請重新執行安裝精靈');
+    const empty = path.join(CFG.dataRoot, 'codex-empty');          // always-empty working root
+    fs.mkdirSync(empty, { recursive: true });
+    for (const f of fs.readdirSync(empty)) fs.rmSync(path.join(empty, f), { recursive: true, force: true });
+    const outFile = path.join(CFG.dataRoot, `codex-out-${process.pid}-${++codexSeq}.txt`);
+    const args = [CFG.codex, ...(search ? ['--search'] : []), 'exec', '-s', 'read-only', ...CODEX_OFF,
+      '--skip-git-repo-check', '--ephemeral', '--ignore-user-config', '--color', 'never',
+      ...(model ? ['-m', model] : []), ...images.map((i) => '--image=' + i), '-C', empty, '-o', outFile, '-'];
+    try {
+      await run(process.execPath, args, { input: prompt, cwd: empty, timeoutMs });
+      return fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : '';
+    } finally { fs.rmSync(outFile, { force: true }); }
+  }
 
   // ---------- OpenAI-compatible ----------
   async function chat(body, timeoutMs) {
@@ -44,6 +69,7 @@ function createAI({ CFG, run, log }) {
         '--model', model, ...claudeBase, '--tools', 'Read', '--allowedTools', 'Read'], { input: prompt, cwd, timeoutMs });
       return r.stdout;
     }
+    if (CFG.provider === 'codex') return codex({ prompt, model, images: CFG.vision === false ? [] : images, timeoutMs });
     const content = [{ type: 'text', text: prompt }];
     if (CFG.vision) for (const f of images) {
       const mime = MIME[path.extname(f).toLowerCase()] || 'image/jpeg';
@@ -67,6 +93,7 @@ function createAI({ CFG, run, log }) {
       if (sandbox) args.push('--mcp-config', mcpConfig);
       return (await run(CFG.claude, args, { input: prompt, cwd, timeoutMs })).stdout;
     }
+    if (CFG.provider === 'codex') return codex({ prompt, model, search: true, timeoutMs });
     if (!agentAvailable()) throw new Error('沒有設定搜尋服務（search），Agent 無法查資料');
     const deadline = Date.now() + timeoutMs;
     const messages = [{ role: 'user', content: prompt + '\n\n（你可以使用 web_search 搜尋、fetch_url 讀網頁。查完後直接輸出最終結果，不要再呼叫工具。）' }];
@@ -107,13 +134,14 @@ function createAI({ CFG, run, log }) {
         '--tools', 'Read', 'Grep', 'Glob', '--allowedTools', 'Read', 'Grep', 'Glob'], { input: prompt, cwd: CFG.vault, timeoutMs });
       return r.stdout;
     }
-    // OpenAI path: the prompt already contains server-selected candidate notes; no tools at all
+    // OpenAI / Codex: the prompt already contains server-selected candidate notes; no tools at all
+    if (CFG.provider === 'codex') return codex({ prompt, model, timeoutMs });
     const m = await chat({ model, messages: [{ role: 'user', content: prompt }] }, timeoutMs);
     return textOf(m);
   }
 
   function agentAvailable() {
-    if (CFG.provider === 'claude') return true;
+    if (CFG.provider === 'claude' || CFG.provider === 'codex') return true;
     return !!(CFG.search && CFG.search.apiKey && ['tavily', 'brave'].includes(CFG.search.provider));
   }
 
@@ -122,6 +150,10 @@ function createAI({ CFG, run, log }) {
     if (CFG.provider === 'claude') {
       const r = await run(CFG.claude, ['-p', '只回答 OK 兩個字', '--model', CFG.smallModel, ...claudeBase, '--tools', ''], { input: '', timeoutMs: 120000 });
       return { chat: /ok/i.test(r.stdout), tools: true };
+    }
+    if (CFG.provider === 'codex') {
+      const out = await codex({ prompt: '只回答 OK 兩個字', model: CFG.smallModel, timeoutMs: 180000 });
+      return { chat: /ok/i.test(out), tools: true };
     }
     const m = await chat({ model: CFG.smallModel, messages: [{ role: 'user', content: '只回答 OK 兩個字' }] }, 60000);
     let tools = false;

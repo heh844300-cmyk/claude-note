@@ -13,9 +13,11 @@
 - 一台**常開**的 Windows 10／11 電腦，裝好 [Obsidian](https://obsidian.md)
 - 一種 AI（安裝時選）：
   - **Claude 訂閱**（Pro／Max）：用 Claude Code 登入，不用另外付費
+  - **ChatGPT 訂閱**：用 OpenAI 的 Codex CLI 登入 ChatGPT 帳號，用的是方案內含的 Codex 額度，不用另外付費（安裝精靈會幫你裝 Codex CLI）
   - **API 金鑰，用多少付多少**：OpenAI、Google Gemini、OpenRouter、DeepSeek 等任何「OpenAI 相容」服務
   - **Ollama 本機模型**：完全免費，在自己電腦上跑（需要夠力的電腦）
-- 想用 Agent 查資料、但不是用 Claude 的話：一個搜尋服務金鑰（[Tavily](https://tavily.com) 或 [Brave Search API](https://brave.com/search/api/)。是否有免費額度、價格多少，請看各家官網）
+- 用 API 金鑰或 Ollama、又想用 Agent 查資料的話：一個搜尋服務金鑰（[Tavily](https://tavily.com) 或 [Brave Search API](https://brave.com/search/api/)。是否有免費額度、價格多少，請看各家官網）。Claude 和 ChatGPT 訂閱都內建搜尋，不需要
+- 訂閱方案都有使用上限，Agent 用得多時可能暫時用完，要等額度恢復；每個人都要用**自己的**帳號，不能共用
 
 ## 安裝
 
@@ -45,11 +47,11 @@
 
 ## 功能差異
 
-| | Claude | 其他 AI |
-|---|---|---|
-| 整理筆記、照片 | ✔ | ✔（模型要能看圖片） |
-| Agent 查資料、灰色連結自動補 | ✔ 內建搜尋 | ✔ 需要搜尋服務金鑰＋支援工具呼叫的模型 |
-| 錄音轉文字 | 進階，需自行安裝 | — |
-| Agent 沙盒（裝程式測試） | 進階，需自行安裝 | — |
+| | Claude 訂閱 | ChatGPT 訂閱（Codex） | API 金鑰／Ollama |
+|---|---|---|---|
+| 整理筆記、照片 | ✔ | ✔ | ✔（模型要能看圖片） |
+| Agent 查資料、灰色連結自動補 | ✔ 內建搜尋 | ✔ 內建搜尋 | ✔ 需要搜尋服務金鑰＋支援工具呼叫的模型 |
+| 錄音轉文字 | 進階，需自行安裝 | — | — |
+| Agent 沙盒（裝程式測試） | 進階，需自行安裝 | — | — |
 
 技術細節：[docs/技術說明.md](docs/技術說明.md)
