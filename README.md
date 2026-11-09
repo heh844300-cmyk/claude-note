@@ -19,11 +19,12 @@
 
 ## 安裝
 
-1. 安裝 Git：在 PowerShell 執行 `winget install --id Git.Git -e`（或到 https://git-scm.com 下載）
+0. 先接受邀請：這是私人專案，請到你的 email 或 GitHub 通知裡，按下專案擁有者寄給你的邀請連結並接受
+1. 安裝 Git：在 PowerShell 執行 `winget install --id Git.Git -e`（或到 https://git-scm.com 下載），裝好後關掉再重開 PowerShell
 2. 下載這個專案（第一次會跳出 GitHub 登入視窗，用受邀的 GitHub 帳號登入）：
    ```
    cd $HOME
-   git clone https://github.com/<擁有者>/<專案名稱>.git ClaudeNote
+   git clone https://github.com/heh844300-cmyk/claude-note.git ClaudeNote
    ```
 3. 打開 `ClaudeNote` 資料夾，**雙擊 `setup.cmd`**，照中文提示一步步完成
 4. 瀏覽器打開 http://127.0.0.1:8787 開始使用
