@@ -12,6 +12,7 @@ const push = require('./lib/push');
 const qr = require('./lib/qr');
 const { createAuth } = require('./lib/auth');
 const library = require('./lib/library');
+const { createVault } = require('./lib/vault');
 
 // ---------- config ----------
 const ROOT = __dirname;
@@ -52,6 +53,7 @@ const CFG = {
   librarianModel: 'haiku',                        // decides where research goes; vault read-only, no web
   librarianTimeoutMs: 10 * 60 * 1000,
   fillAfterMs: 60 * 1000,                         // an empty note made by clicking a gray link is filled after 1 min untouched (0 = off)
+  vaultExclude: [],                               // vault folders hidden from the web app's vault browser, e.g. ["私人", "日記/2025"]
   bigTextChars: 1500,
   lateReminderMs: 6 * 3600 * 1000, // reminders missed while the PC was off: still send if within 6h
   scanEveryMs: 30 * 1000,
@@ -446,8 +448,9 @@ async function notify(title, body, url = '/') {
 }
 
 // ---------- public-entrance login ----------
+const vault = createVault({ CFG });
 const auth = createAuth({ dataRoot: CFG.dataRoot, log,
-  onLogin: (s) => notify('🔐 新裝置已登入', `${s.ip}｜${s.ua.slice(0, 80)}
+  onLogin: (s) => notify(s.kiosk ? '🔐 公用電腦已登入（2 小時內有效）' : '🔐 新裝置已登入', `${s.ip}｜${s.ua.slice(0, 80)}
 不是你的話，到「新增」頁的登入裝置清單把它移除`, '/').catch(() => {}) });
 
 // ---------- scheduler: reminders + expiry ----------
@@ -792,7 +795,10 @@ async function route(req, res) {
     if (p[2] === 'health') return send(res, 200, { ok: true });
     if (p[2] === 'features') return send(res, 200, { audio: !!CFG.audio, agent: agentAvailable(), provider: CFG.provider });
     if (p[2] === 'auth') {
-      if (p[3] === 'me' && M === 'GET') return send(res, 200, { public: !!req.publicSession, session: req.publicSession ? req.publicSession.id : null });
+      if (p[3] === 'me' && M === 'GET') {
+        const s = req.publicSession;
+        return send(res, 200, { public: !!s, session: s ? s.id : null, kiosk: !!(s && s.kiosk), expires: s ? new Date(s.exp).toISOString() : null });
+      }
       if (p[3] === 'lookup' && M === 'POST') { const r = auth.lookup((await readJson(req)).code); return r ? send(res, 200, r) : send(res, 410, { error: '這個 QR code 已失效或已使用過' }); }
       if (p[3] === 'decide' && M === 'POST') {
         const b = await readJson(req);
@@ -868,6 +874,27 @@ async function route(req, res) {
       return send(res, 200, await fsp.readFile(safeNote(p[3]), 'utf8').catch(() => { throw httpErr(404, '找不到筆記（可能已到期移到垃圾桶）'); }), 'text/markdown; charset=utf-8');
     }
     if (p[2] === 'attachments' && p[3] && M === 'GET') return sendFile(res, safeInside(ATTACH_DIR, p[3]));
+    // read-only browsing of the whole vault (hidden: dot folders and CFG.vaultExclude)
+    if (p[2] === 'vault' && M === 'GET') {
+      const q = url.searchParams;
+      try {
+        if (p[3] === 'list') return send(res, 200, vault.list(q.get('dir') || ''));
+        if (p[3] === 'note') return send(res, 200, vault.readNote(q.get('path')), 'text/markdown; charset=utf-8');
+        if (p[3] === 'search') return send(res, 200, vault.search(q.get('q')));
+        if (p[3] === 'resolve') { const r = vault.resolve(q.get('name'), q.get('kind') === 'raw' ? 'raw' : 'note'); return r ? send(res, 200, { path: r }) : send(res, 404, { error: '找不到這篇筆記（可能還沒建立）' }); }
+        if (p[3] === 'raw') {
+          const rel = q.get('path') || vault.resolve(q.get('name'), 'raw');
+          if (!rel) return send(res, 404, { error: 'not found' });
+          const f = vault.raw(rel);
+          const buf = await fsp.readFile(f.abs).catch(() => null);
+          return buf ? send(res, 200, buf, f.type) : send(res, 404, { error: 'not found' }); // no-store: nothing left behind on a public computer
+        }
+      } catch (e) {
+        if (e.status) throw httpErr(e.status, e.message);
+        if (e.code === 'ENOENT') throw httpErr(404, '找不到這篇筆記');
+        throw e;
+      }
+    }
     return send(res, 404, { error: 'not found' });
   }
 
@@ -897,13 +924,14 @@ async function publicRoute(req, res) {
   const M = req.method, pn = url.pathname;
   if (pn === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n', 'text/plain');
   if (pn === '/auth/start' && M === 'POST') {
-    const r = auth.start(clientIp(req), req.headers['user-agent']);
+    let body = {}; try { body = await readJson(req); } catch {}
+    const r = auth.start(clientIp(req), req.headers['user-agent'], body.kiosk !== false); // public computer unless explicitly not
     if (r.error) return send(res, r.status, { error: r.error });
     return send(res, 200, { poll: r.poll, expiresIn: r.expiresIn, qr: qr.toSvg(`${CFG.funnelUrl}/approve.html#${r.code}`) });
   }
   if (pn === '/auth/poll' && M === 'POST') {
     const r = auth.poll((await readJson(req)).poll);
-    if (r.token) return send(res, 200, { status: 'approved' }, undefined, { 'Set-Cookie': auth.cookieFor(r.token) });
+    if (r.token) return send(res, 200, { status: 'approved' }, undefined, { 'Set-Cookie': auth.cookieFor(r.token, r.kiosk) });
     return send(res, 200, r);
   }
   if (pn === '/auth/logout' && M === 'POST') {

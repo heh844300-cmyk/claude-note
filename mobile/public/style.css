@@ -105,3 +105,21 @@ main.login .actions button.danger { margin: 0; width: auto; }
 
 .md a.wl { color: var(--accent); text-decoration: underline; }
 #noteSeg { margin-bottom: 10px; }
+
+/* public-computer banner */
+.kiosk { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; background: var(--warn-bg); font-size: 14px; }
+.kiosk button { flex: none; }
+.kioskopt { display: block; text-align: left; margin: 0 auto 12px; max-width: 360px; }
+/* vault browser */
+.vsearch { display: flex; gap: 8px; margin-bottom: 10px; }
+.vsearch input { flex: 1; min-width: 0; }
+.crumbs { margin: 4px 0 10px; font-size: 14px; word-break: break-all; }
+.crumbs a { color: var(--accent); }
+/* richer markdown */
+.md pre { overflow-x: auto; padding: 10px; border-radius: 8px; background: rgba(127,127,127,.12); font-size: 13px; }
+.md blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid rgba(127,127,127,.4); }
+.md blockquote.callout { border-left-color: var(--accent); background: rgba(127,127,127,.08); border-radius: 0 8px 8px 0; }
+.md .tbl { overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: 14px; }
+.md th, .md td { border: 1px solid rgba(127,127,127,.3); padding: 4px 8px; text-align: left; vertical-align: top; }
+.md ol { padding-left: 1.4em; }

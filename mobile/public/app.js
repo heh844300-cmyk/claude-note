@@ -21,10 +21,11 @@ let current = 'new';
 function show(tab) {
   current = tab;
   document.querySelectorAll('.tab').forEach((s) => (s.hidden = s.id !== 'tab-' + tab));
-  const navTab = tab === 'edit' ? 'drafts' : tab === 'read' ? 'notes' : tab;
+  const navTab = tab === 'edit' ? 'drafts' : tab === 'read' ? 'notes' : tab === 'vread' ? 'vault' : tab;
   document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === navTab));
   if (tab === 'drafts') loadDrafts();
   if (tab === 'notes') loadNotes();
+  if (tab === 'vault' && !vaultShown) loadVault(vaultDir);
   window.scrollTo(0, 0);
 }
 document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => show(b.dataset.tab)));
@@ -218,9 +219,56 @@ async function loadNotes() {
 const AGENT_LABEL = { queued: '🔎 排隊中', running: '🔎 查資料中', done: '🔎 已完成', error: '🔎 失敗' };
 let reading = null, agentTimer = null;
 $('#noteList').addEventListener('click', (e) => { const li = e.target.closest('li[data-name]'); if (li) openNote(li.dataset.name); });
-$('#readBody').addEventListener('click', (e) => {
-  const a = e.target.closest('a[data-note]');
-  if (a) { e.preventDefault(); openNote(a.dataset.note); }
+// ---------- whole vault (read-only) ----------
+let vaultDir = '', vaultShown = false;
+async function loadVault(dir) {
+  vaultDir = dir; vaultShown = true;
+  let r;
+  try { r = await api('/api/vault/list?dir=' + encodeURIComponent(dir)); } catch (e) { toast('讀取失敗：' + e.message); return; }
+  const parts = r.dir ? r.dir.split('/') : [];
+  $('#vCrumbs').innerHTML = `<a href="#" data-dir="">📚 筆記庫</a>` +
+    parts.map((p, i) => ` / <a href="#" data-dir="${esc(parts.slice(0, i + 1).join('/'))}">${esc(p)}</a>`).join('');
+  $('#vList').innerHTML =
+    r.folders.map((f) => `<li data-dir="${esc(f.path)}"><div class="t">📁 ${esc(f.name)}</div><div class="m">${f.count} 篇</div></li>`).join('') +
+    r.notes.map((n) => `<li data-path="${esc(n.path)}"><div class="t">📄 ${esc(n.name)}</div><div class="m">${n.mtime ? fmtTime(new Date(n.mtime).toISOString()) : ''}</div></li>`).join('');
+  $('#vEmpty').hidden = r.folders.length + r.notes.length > 0;
+  window.scrollTo(0, 0);
+}
+$('#vList').addEventListener('click', (e) => {
+  const li = e.target.closest('li'); if (!li) return;
+  if (li.dataset.dir !== undefined) loadVault(li.dataset.dir);
+  else if (li.dataset.path) openVaultNote(li.dataset.path);
+});
+$('#vCrumbs').addEventListener('click', (e) => { const a = e.target.closest('a[data-dir]'); if (a) { e.preventDefault(); $('#vSearch').value = ''; loadVault(a.dataset.dir); } });
+$('#vSearchForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const q = $('#vSearch').value.trim();
+  if (!q) return loadVault(vaultDir);
+  let r = [];
+  try { r = await api('/api/vault/search?q=' + encodeURIComponent(q)); } catch (err) { return toast('搜尋失敗：' + err.message); }
+  $('#vCrumbs').innerHTML = `🔍 「${esc(q)}」找到 ${r.length} 篇　<a href="#" data-dir="${esc(vaultDir)}">清除搜尋</a>`;
+  $('#vList').innerHTML = r.map((n) => `<li data-path="${esc(n.path)}"><div class="t">📄 ${esc(n.name)}</div><div class="m">${esc(n.path)}${n.snippet ? '<br>…' + esc(n.snippet) + '…' : ''}</div></li>`).join('');
+  $('#vEmpty').hidden = r.length > 0;
+};
+$('#vBack').onclick = () => show('vault');
+// notes in Claude-Notes open in the full reader (with the Agent box); everything else in the vault reader
+async function openVaultNote(p) {
+  const m = p.match(/^Claude-Notes\/((?:研究\/)?[^/]+\.md)$/);
+  if (m) return openNote(m[1]);
+  try {
+    const md = await api('/api/vault/note?path=' + encodeURIComponent(p));
+    $('#vPath').textContent = p.replace(/\.md$/i, '');
+    $('#vBody').innerHTML = renderMd(md);
+    show('vread');
+  } catch (e) { toast(e.message); }
+}
+// any [[link]] in any rendered note
+document.addEventListener('click', async (e) => {
+  const a = e.target.closest('a[data-link]');
+  if (!a) return;
+  e.preventDefault();
+  try { const r = await api('/api/vault/resolve?name=' + encodeURIComponent(a.dataset.link)); openVaultNote(r.path); }
+  catch { toast('還沒有這篇筆記（灰色連結）。在 Obsidian 點它，AI 會自動補寫。', 4000); }
 });
 async function openNote(name) {
   try {
@@ -277,6 +325,7 @@ $('#notifTest').onclick = async () => {
 async function loadSessions() {
   try {
     const me = await api('/api/auth/me');
+    if (me.kiosk) return startKiosk(me);
     $('#logoutBtn').hidden = !me.public;
     $('#entryState').textContent = me.public ? '你現在透過公開網址連線' : '你現在透過 Tailscale 連線';
     const list = await api('/api/auth/sessions');
@@ -290,17 +339,35 @@ document.addEventListener('click', async (e) => {
   try { await api('/api/auth/sessions/' + encodeURIComponent(id), { method: 'DELETE' }); toast('已移除，那台裝置需要重新掃碼登入'); loadSessions(); }
   catch (err) { toast('失敗：' + err.message); }
 });
-$('#logoutBtn').onclick = async () => { await fetch('/auth/logout', { method: 'POST' }).catch(() => {}); location.href = '/login.html'; };
+// log out and leave nothing behind (service worker + its cache), important on a public computer
+async function logout() {
+  await fetch('/auth/logout', { method: 'POST' }).catch(() => {});
+  try { for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); } catch {}
+  try { for (const k of await caches.keys()) await caches.delete(k); } catch {}
+  location.replace('/login.html');
+}
+$('#logoutBtn').onclick = logout;
+$('#kioskLogout').onclick = logout;
+
+// public-computer mode: banner, no push / device management, idle logout after 15 min (the server enforces it too)
+function startKiosk(me) {
+  const until = new Date(me.expires);
+  $('#kioskText').textContent = `🖥️ 公用電腦模式・${String(until.getHours()).padStart(2, '0')}:${String(until.getMinutes()).padStart(2, '0')} 前有效・閒置 15 分鐘自動登出・用完請按登出`;
+  $('#kioskBar').hidden = false;
+  document.querySelectorAll('.box.notif, #sessList').forEach((el) => { const b = el.closest('.box') || el; b.hidden = true; });
+  let last = Date.now();
+  for (const ev of ['click', 'keydown', 'scroll', 'touchstart', 'mousemove']) addEventListener(ev, () => { last = Date.now(); }, { passive: true });
+  setInterval(() => { if (Date.now() - last > 15 * 60 * 1000 || Date.now() > until.getTime()) logout(); }, 30000);
+}
 
 // ---------- tiny markdown renderer (safe: escapes first) ----------
 function inline(s) {
   s = esc(s);
-  s = s.replace(/!\[\[([^\]|]+?\.(?:png|jpe?g|gif|webp|bmp|heic))(?:\|[^\]]*)?\]\]/gi, (_, f) => `<img src="/api/attachments/${encodeURIComponent(f)}" alt="">`);
-  s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, a, b) => {
-    // only notes inside Claude-Notes (and its 研究 folder) can be opened in the app
-    const m = a.match(/^Claude-Notes\/((?:研究\/)?[^/]+)$/);
-    return m ? `<a class="wl" href="#" data-note="${m[1]}.md">${b || a}</a>` : `<span class="wl" title="請在 Obsidian 開啟">${b || a}</span>`;
-  });
+  // images anywhere in the vault, resolved by name like Obsidian does
+  s = s.replace(/!\[\[([^\]|]+?\.(?:png|jpe?g|gif|webp|bmp|svg|heic))(?:\|[^\]]*)?\]\]/gi, (_, f) => `<img src="/api/vault/raw?name=${encodeURIComponent(f)}" alt="">`);
+  s = s.replace(/!\[\[([^\]|]+?)(?:\|[^\]]*)?\]\]/g, (_, a) => `<a class="wl" href="#" data-link="${a}">📎 ${a}</a>`);
+  // every [[link]] is clickable; it is resolved against the whole vault when tapped
+  s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, a, b) => `<a class="wl" href="#" data-link="${a}">${b || a.replace(/#.*$/, '')}</a>`);
   s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
@@ -327,19 +394,45 @@ function renderMd(md) {
       i = end + 1;
     }
   }
-  let list = [], depth = 0;
-  const flushList = () => { while (depth > 0) { out.push('</ul>'); depth--; } };
+  const stack = []; // open list tags, e.g. ['ul','ol']
+  const flushList = () => { while (stack.length) out.push(`</${stack.pop()}>`); };
+  // split a table row on |, but not on the | inside [[link|alias]] or an escaped \|
+  const cells = (row) => row.trim().replace(/^\||\|$/g, '').replace(/\[\[[^\]]*\]\]/g, (m) => m.replace(/\\?\|/g, '\u0001')).replace(/\\\|/g, '\u0001')
+    .split('|').map((c) => c.trim().replace(/\u0001/g, '|'));
   for (; i < lines.length; i++) {
     const l = lines[i];
     let m;
-    if ((m = l.match(/^(\t*|\s*)[-*+] (.*)$/))) {
-      const lvl = Math.floor(m[1].replace(/\t/g, '    ').length / 2) + 1;
-      while (depth < lvl) { out.push('<ul>'); depth++; } while (depth > lvl) { out.push('</ul>'); depth--; }
-      let t = m[2], cls = '';
+    if ((m = l.match(/^(\t*|\s*)(?:([-*+])|(\d+)[.)]) (.*)$/))) {
+      const lvl = Math.floor(m[1].replace(/\t/g, '    ').length / 2) + 1, tag = m[2] ? 'ul' : 'ol';
+      while (stack.length > lvl) out.push(`</${stack.pop()}>`);
+      if (stack.length === lvl && stack[lvl - 1] !== tag) out.push(`</${stack.pop()}>`);
+      while (stack.length < lvl) { out.push(`<${tag}>`); stack.push(tag); }
+      let t = m[4], cls = '';
       if ((m = t.match(/^\[( |x|X)\] (.*)$/))) { cls = ' class="task"'; t = (m[1] === ' ' ? '☐ ' : '☑ ') + m[2]; }
       out.push(`<li${cls}>${inline(t)}</li>`); continue;
     }
     flushList();
+    if (/^\s*```/.test(l)) { // fenced code block
+      const code = [];
+      for (i++; i < lines.length && !/^\s*```/.test(lines[i]); i++) code.push(lines[i]);
+      out.push(`<pre><code>${esc(code.join('\n'))}</code></pre>`); continue;
+    }
+    if (/^\s*>/.test(l)) { // blockquote / Obsidian callout
+      const q = [];
+      for (; i < lines.length && /^\s*>/.test(lines[i]); i++) q.push(lines[i].replace(/^\s*> ?/, ''));
+      i--;
+      let cls = '';
+      if ((m = (q[0] || '').match(/^\[!(\w+)\][+-]?\s*(.*)$/))) { cls = ' class="callout"'; q[0] = '**' + (m[2] || m[1]) + '**'; }
+      out.push(`<blockquote${cls}>${renderMd(q.join('\n'))}</blockquote>`); continue;
+    }
+    if (/^\s*\|/.test(l) && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1] || '')) { // table
+      const head = cells(l); const rows = [];
+      for (i += 2; i < lines.length && /^\s*\|/.test(lines[i]); i++) rows.push(cells(lines[i]));
+      i--;
+      out.push('<div class="tbl"><table><thead><tr>' + head.map((c) => `<th>${inline(c)}</th>`).join('') + '</tr></thead><tbody>' +
+        rows.map((r) => '<tr>' + r.map((c) => `<td>${inline(c)}</td>`).join('') + '</tr>').join('') + '</tbody></table></div>');
+      continue;
+    }
     if ((m = l.match(/^(#{1,6}) (.*)$/))) out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`);
     else if (/^---+$/.test(l)) out.push('<hr>');
     else if ((m = l.match(/^<details><summary>(.*)<\/summary>\s*$/))) out.push(`<details><summary>${esc(m[1])}</summary>`);

@@ -6,7 +6,7 @@ async function begin() {
   $('#again').hidden = true;
   $('#qrBox').innerHTML = '<p class="hint">產生中…</p>';
   try {
-    const r = await fetch('/auth/start', { method: 'POST' });
+    const r = await fetch('/auth/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kiosk: $('#kiosk').checked }) });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
     pollTok = d.poll; deadline = Date.now() + d.expiresIn * 1000;
@@ -42,4 +42,5 @@ function stop(msg) {
   $('#again').hidden = false;
 }
 $('#again').onclick = begin;
+$('#kiosk').onchange = () => { clearInterval(timer); pollTok = null; begin(); }; // the choice is part of the login request: make a new QR
 begin();

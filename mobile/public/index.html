@@ -16,8 +16,13 @@
     <button data-tab="new" class="active">新增</button>
     <button data-tab="drafts">草稿 <span id="draftCount" class="badge" hidden></span></button>
     <button data-tab="notes">已上傳</button>
+    <button data-tab="vault">筆記庫</button>
   </nav>
 </header>
+<div id="kioskBar" class="kiosk" hidden>
+  <span id="kioskText">🖥️ 公用電腦模式</span>
+  <button type="button" id="kioskLogout" class="small">登出</button>
+</div>
 
 <main>
   <!-- 新增 -->
@@ -105,6 +110,24 @@
       <button type="button" id="agentBtn">讓 Agent 查資料</button>
     </div>
     <article id="readBody" class="md"></article>
+  </section>
+
+  <!-- 整個筆記庫（唯讀） -->
+  <section id="tab-vault" class="tab" hidden>
+    <form id="vSearchForm" class="vsearch">
+      <input id="vSearch" type="search" placeholder="搜尋整個筆記庫…" enterkeyhint="search">
+      <button type="submit">搜尋</button>
+    </form>
+    <div id="vCrumbs" class="crumbs"></div>
+    <ul id="vList" class="list"></ul>
+    <p id="vEmpty" class="empty" hidden>這裡沒有筆記</p>
+  </section>
+
+  <!-- 閱讀筆記庫裡的筆記 -->
+  <section id="tab-vread" class="tab" hidden>
+    <button class="back" id="vBack" type="button">← 筆記庫</button>
+    <p id="vPath" class="hint left"></p>
+    <article id="vBody" class="md"></article>
   </section>
 </main>
 

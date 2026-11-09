@@ -31,6 +31,7 @@ async function load() {
   const t = new Date(d.created);
   $('#info').innerHTML =
     `<div class="row"><span class="lbl">裝置</span><span>${esc(device(d.ua))}</span></div>` +
+    `<div class="row"><span class="lbl">類型</span><span>${d.kiosk ? '🖥️ 公用電腦（2 小時內有效，閒置 15 分鐘登出）' : '個人裝置（30 天內有效）'}</span></div>` +
     `<div class="row"><span class="lbl">IP</span><span>${esc(d.ip)}</span></div>` +
     `<div class="row"><span class="lbl">時間</span><span>${t.getHours()}:${String(t.getMinutes()).padStart(2, '0')}（${d.expiresIn} 秒後失效）</span></div>` +
     `<p class="hint left">${esc(d.ua)}</p>`;
