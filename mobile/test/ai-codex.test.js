@@ -14,7 +14,7 @@ const run = async (cmd, args, opts) => {
   fs.writeFileSync(o, 'RESULT');
   return { stdout: '', stderr: '' };
 };
-const CFG = { provider: 'codex', codex: fakeCodex, dataRoot: tmp, vision: true, smallModel: '', agentModel: '' };
+const CFG = { provider: 'codex', codex: fakeCodex, dataRoot: tmp, codexWorkDir: path.join(tmp, 'codex-empty'), vision: true, smallModel: '', agentModel: '' };
 const ai = createAI({ CFG, run, log: () => {} });
 
 (async () => {

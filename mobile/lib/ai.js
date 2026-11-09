@@ -27,7 +27,8 @@ function createAI({ CFG, run, log }) {
   let codexSeq = 0;
   async function codex({ prompt, model, images = [], search = false, timeoutMs }) {
     if (!CFG.codex || !fs.existsSync(CFG.codex)) throw new Error('找不到 Codex CLI（config.json 的 "codex"），請重新執行安裝精靈');
-    const empty = path.join(CFG.dataRoot, 'codex-empty');          // always-empty working root
+    // always-empty working root OUTSIDE any git repo, so Codex finds no project instructions (AGENTS.md) or .codex config
+    const empty = CFG.codexWorkDir || path.join(require('os').tmpdir(), 'claude-note-codex-empty');
     fs.mkdirSync(empty, { recursive: true });
     for (const f of fs.readdirSync(empty)) fs.rmSync(path.join(empty, f), { recursive: true, force: true });
     const outFile = path.join(CFG.dataRoot, `codex-out-${process.pid}-${++codexSeq}.txt`);
