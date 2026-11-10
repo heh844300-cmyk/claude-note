@@ -65,6 +65,7 @@
 
   <!-- 草稿列表 -->
   <section id="tab-drafts" class="tab" hidden>
+    <button type="button" id="upAllBtn" class="primary wide nokiosk" hidden></button>
     <ul id="draftList" class="list"></ul>
     <p id="draftEmpty" class="empty" hidden>目前沒有草稿</p>
   </section>
@@ -76,6 +77,10 @@
     <div id="groupBox" class="box group" hidden>
       <div id="groupText" class="hint left"></div>
       <div class="row gap"><button type="button" id="groupOpenOv" class="small" hidden>看總覽</button><button type="button" id="uploadAllBtn" class="primary">全部上傳</button></div>
+    </div>
+    <div id="updateBox" class="box group" hidden>
+      <div id="updateText" class="hint left"></div>
+      <ul id="updateWarn" class="warnlist"></ul>
     </div>
     <div id="editImages" class="thumbs"></div>
     <label class="field">標題<input id="edTitle" type="text"></label>
@@ -116,6 +121,13 @@
       <button type="button" data-f="mine" class="active">我的筆記</button>
       <button type="button" data-f="research">🔎 研究</button>
     </div>
+    <div id="refreshBox" class="box nokiosk">
+      <button type="button" id="refreshAllBtn">🔄 全部用最新規則更新</button>
+      <div id="refreshConfirm" hidden>
+        <p id="refreshText" class="hint left"></p>
+        <div class="row gap"><button type="button" id="refreshGo" class="primary">開始更新</button><button type="button" id="refreshCancel">取消</button></div>
+      </div>
+    </div>
     <ul id="noteList" class="list"></ul>
     <p id="noteEmpty" class="empty" hidden>還沒有上傳的筆記</p>
   </section>
@@ -126,6 +138,7 @@
     <div id="agentBox" class="box">
       <div class="row"><span class="lbl">🔎 Agent</span><span id="agentState" class="hint"></span></div>
       <button type="button" id="agentBtn">讓 Agent 查資料</button>
+      <button type="button" id="refreshBtn" class="nokiosk" hidden>🔄 用最新規則更新這篇</button>
     </div>
     <details id="ansBox" class="box" hidden>
       <summary><span class="lbl">💬 回答待釐清問題</span> <span id="ansCount" class="hint"></span></summary>

@@ -158,3 +158,10 @@ main.login .actions button.danger { margin: 0; width: auto; }
 #ansBox .ans { margin: 10px 0; }
 #ansBox .aq { font-size: 14px; margin-bottom: 4px; word-break: break-word; }
 #ansBox textarea { width: 100%; box-sizing: border-box; font: inherit; }
+/* updating notes */
+.kiosk-mode .nokiosk { display: none !important; }
+button.wide { width: 100%; margin-bottom: 10px; }
+.warnlist { margin: 6px 0 0; padding-left: 4px; list-style: none; font-size: 14px; color: var(--danger); }
+#refreshBox button { width: 100%; }
+#refreshBox .row button { width: auto; flex: 1; }
+.warnlist li.info { color: var(--muted); }

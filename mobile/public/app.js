@@ -72,12 +72,15 @@ async function loadDrafts() {
   const b = $('#draftCount'); b.hidden = !list.length; b.textContent = list.length;
   if (current === 'drafts') {
     $('#draftEmpty').hidden = list.length > 0;
-    const grp = (d) => !d.group ? '' : d.group.role === 'overview' ? `<span class="pill grp">📑 總覽・${d.group.size} 篇</span>` : `<span class="pill grp">🧩 ${d.group.index}／${d.group.size}</span>`;
+    const grp = (d) => d.update ? `<span class="pill grp">🔄 更新${d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length ? '・⚠️' + d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length : ''}</span>` : !d.group ? '' : d.group.role === 'overview' ? `<span class="pill grp">📑 總覽・${d.group.size} 篇</span>` : `<span class="pill grp">🧩 ${d.group.index}／${d.group.size}</span>`;
     $('#draftList').innerHTML = list.map((d) => `<li data-id="${d.id}"${d.group && d.group.role === 'topic' ? ' class="in-group"' : ''}>
       <div class="t">${grp(d)}${esc(d.title || d.preview || '（未命名）')}</div>
       <div class="m"><span class="pill ${d.status}">${STATUS[d.status] || d.status}</span>${esc(d.status === 'processing' ? d.stage : fmtTime(d.createdAt))}
       ${d.images ? ' · 📷' + d.images : ''}${d.audios ? ' · 🎙️' + d.audios : ''}${d.reminders ? ' · ⏰' + d.reminders : ''}${d.expires ? ' · 🗑️' + esc(d.expires.slice(5, 10).replace('-', '/')) : ''}</div></li>`).join('');
   }
+  const ups = list.filter((d) => d.update), upReady = ups.filter((d) => d.status === 'ready');
+  $('#upAllBtn').hidden = current !== 'drafts' || !upReady.length;
+  $('#upAllBtn').textContent = `⬆️ 上傳全部更新草稿（${upReady.length} 篇${ups.length > upReady.length ? `，另有 ${ups.length - upReady.length} 篇還在處理` : ''}）`;
   schedulePoll(list.some((d) => d.status === 'processing'));
   return list;
 }
@@ -115,6 +118,7 @@ function updateStatus() {
   ['#edTitle', '#edTags', '#edBody', '#reviseText', '#reviseBtn', '#saveBtn', '#uploadBtn', '#uploadAllBtn', '#deleteBtn', '#edExpMode', '#edExpires', '#addRem', '#edAgent'].forEach((q) => ($(q).disabled = busy));
   if (draft.status === 'error' && !draft.body) ['#reviseBtn', '#uploadBtn'].forEach((q) => ($(q).disabled = true));
   const r = $('#retryBtn'); if (r) r.onclick = retry;
+  if (draft.update) ['#edTitle', '#edTags', '#edExpMode', '#edExpires', '#addRem', '#edAgent'].forEach((q) => ($(q).disabled = true));
 }
 function fillEdit() {
   $('#edTitle').value = draft.title || '';
@@ -132,7 +136,7 @@ function fillEdit() {
   $('#edAgent').checked = !!draft.agent;
   $('#edModel').textContent = draft.model ? `整理模型：${draft.model === 'haiku' ? 'Haiku（輕量）' : draft.model === 'sonnet' ? 'Sonnet' : draft.model}` : '';
   setMode('edit'); updateStatus(); checkTimes();
-  fillGroup();
+  fillGroup(); fillUpdate();
 }
 // one input split into several notes: an auto-generated overview + topic drafts
 function fillGroup() {
@@ -237,7 +241,7 @@ window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault()
 // ---------- notes ----------
 let noteFolder = 'mine';
 document.querySelectorAll('#noteSeg button').forEach((b) => b.addEventListener('click', () => {
-  noteFolder = b.dataset.f;
+  noteFolder = b.dataset.f; $('#refreshBox').hidden = noteFolder === 'research';
   document.querySelectorAll('#noteSeg button').forEach((x) => x.classList.toggle('active', x === b));
   loadNotes();
 }));
@@ -306,7 +310,7 @@ document.addEventListener('click', async (e) => {
 async function openNote(name) {
   try {
     const md = await api('/api/notes/' + encodeURIComponent(name));
-    reading = name; $('#readBody').innerHTML = renderMd(md); show('read'); refreshAgent(); loadAnswers();
+    reading = name; $('#readBody').innerHTML = renderMd(md); show('read'); refreshAgent(); loadAnswers(); $('#refreshBtn').hidden = name.includes('/') || !/^﻿?---[\s\S]*?\ngenerated_by:\s*claude-note/.test(md);
   } catch (err) { toast(err.message); }
 }
 async function refreshAgent() {
@@ -594,3 +598,42 @@ async function saveAnswers(runAgent) {
 }
 $('#ansSave').onclick = () => saveAnswers(false);
 $('#ansRun').onclick = () => saveAnswers(true);
+
+// ---------- updating notes with the current rules ----------
+function fillUpdate() {
+  const u = draft.update;
+  $('#updateBox').hidden = !u || draft.status === 'processing';
+  if (!u) return;
+  $('#updateText').textContent = `🔄 這是「${u.note.replace(/\.md$/i, '')}」的更新草稿：上傳時只取代原筆記的正文（這裡只能改正文），檔名、標題、標籤、到期、提醒、Agent 研究結果、照片和原文都不變；舊版會先備份到筆記庫的 .trash。`;
+  $('#updateWarn').innerHTML = (u.warnings || []).map((w) => `<li class="${w.startsWith('ℹ️') ? 'info' : ''}">${w.startsWith('ℹ️') ? '' : '⚠️ '}${esc(w)}</li>`).join('');
+  // an update only replaces the body: the other fields stay as they are in the note
+  ['#edTitle', '#edTags', '#edExpMode', '#edExpires', '#addRem', '#edAgent'].forEach((q) => ($(q).disabled = true));
+}
+$('#upAllBtn').onclick = async () => {
+  const btn = $('#upAllBtn'); btn.disabled = true;
+  try {
+    const r = await api('/api/refresh/upload', { method: 'POST' });
+    toast(`已更新 ${r.names.length} 篇` + (r.skipped.length ? `；${r.skipped.length} 篇沒有上傳：${r.skipped.map((s) => s.note.replace(/\.md$/i, '') + '（' + s.error + '）').join('、')}` : ''), 6000);
+  } catch (e) { toast('上傳失敗：' + e.message, 5000); }
+  btn.disabled = false; loadDrafts();
+};
+$('#refreshAllBtn').onclick = async () => {
+  let r; try { r = await api('/api/refresh'); } catch (e) { return toast(e.message); }
+  if (!r.notes.length) return toast('沒有可以更新的筆記（研究筆記、總覽、你自己寫的筆記不會更新；已經有更新草稿的也會跳過）', 5000);
+  $('#refreshText').textContent = `會用最新的整理規則更新 ${r.notes.length} 篇筆記（研究/ 名詞筆記、總覽和你自己寫的筆記不包含），每篇產生一份更新草稿放在「草稿」，你看過再上傳。每篇會用掉 1 次 AI 整理（用比較強的模型，Claude 訂閱會用到較多額度），上傳後再各用 1～2 次拆名詞解釋；用免費額度的話請留意。`;
+  $('#refreshConfirm').hidden = false; $('#refreshAllBtn').hidden = true;
+};
+$('#refreshCancel').onclick = () => { $('#refreshConfirm').hidden = true; $('#refreshAllBtn').hidden = false; };
+$('#refreshGo').onclick = async () => {
+  $('#refreshGo').disabled = true;
+  try {
+    const r = await api('/api/refresh', { method: 'POST' });
+    toast(`已排入 ${r.made} 篇更新，完成後到「草稿」查看` + (r.failed.length ? `；${r.failed.length} 篇無法更新` : ''), 5000);
+    $('#refreshConfirm').hidden = true; $('#refreshAllBtn').hidden = false; loadDrafts();
+  } catch (e) { toast('失敗：' + e.message, 4000); }
+  $('#refreshGo').disabled = false;
+};
+$('#refreshBtn').onclick = async () => {
+  try { const d = await api('/api/notes/' + encodeURIComponent(reading) + '/refresh', { method: 'POST' }); toast('已開始更新，完成後在「草稿」查看', 3500); openDraft(d.id); }
+  catch (e) { toast(e.message, 4500); }
+};
