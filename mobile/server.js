@@ -920,6 +920,18 @@ async function route(req, res) {
 // ---------- public entrance (127.0.0.1:publicPort, reached only through Tailscale Funnel) ----------
 const PUBLIC_FILES = new Set(['login.html', 'login.js', 'approve.html', 'approve.js', 'style.css', 'icon-192.png', 'icon-512.png', 'manifest.webmanifest', 'sw.js']);
 const clientIp = (req) => String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress;
+// what a public-computer session may do besides reading (everything else is refused)
+const KIOSK_WRITES = [
+  ['POST', /^\/api\/drafts$/],                                  // new note (text / photos)
+  ['PUT', /^\/api\/drafts\/[^/]+$/],                            // edit a draft
+  ['POST', /^\/api\/drafts\/[^/]+\/(revise|retry|upload)$/],    // ask AI to revise, retry, upload to Obsidian
+  ['POST', /^\/api\/agent$/],                                   // let the Agent research a note
+];
+function kioskAllowed(method, pathname) {
+  if (pathname.startsWith('/api/auth/sessions')) return false;  // never show / change the device list
+  if (method === 'GET' || method === 'HEAD') return true;
+  return KIOSK_WRITES.some(([m, re]) => m === method && re.test(pathname));
+}
 async function publicRoute(req, res) {
   res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -952,11 +964,10 @@ async function publicRoute(req, res) {
     if (M === 'GET' || M === 'HEAD') { res.writeHead(302, { Location: '/login.html', 'Cache-Control': 'no-store' }); return res.end(); }
     return send(res, 401, { error: '請先登入', login: true });
   }
-  // public computer = view only, enforced here (not just hidden in the UI): no writes, no approving other logins,
-  // no push, no draft/Agent actions, no peeking at the device list. /auth/logout is handled above.
-  if (s.kiosk && ((M !== 'GET' && M !== 'HEAD') || pn.startsWith('/api/auth/sessions'))) {
-    return send(res, 403, { error: '公用電腦模式只能瀏覽' });
-  }
+  // public computer: browse + add notes (+ Agent), enforced here (not just hidden in the UI).
+  // Only these changes are allowed; everything else (approving other logins, push, the device list, deleting drafts,
+  // gray-link fills, share target) is refused. /auth/logout is handled above.
+  if (s.kiosk && !kioskAllowed(M, pn)) return send(res, 403, { error: '公用電腦模式不能做這個操作' });
   req.publicSession = s;
   return route(req, res);
 }

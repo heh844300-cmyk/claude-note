@@ -371,10 +371,8 @@ function startKiosk(me) {
   document.body.classList.add('kiosk-mode');
   $('#linksBox').hidden = true;
   document.querySelectorAll('.box.notif, #sessList').forEach((el) => { const b = el.closest('.box') || el; b.hidden = true; });
-  // view only (the server refuses any change): hide adding / drafts, open the vault
-  document.querySelectorAll('nav button[data-tab="new"], nav button[data-tab="drafts"]').forEach((b) => (b.hidden = true));
-  $('#agentBox').hidden = true;
-  if (current === 'new' || current === 'drafts' || current === 'edit') show('vault');
+  // browse + add notes + Agent; deleting drafts is not allowed here (the server refuses it too)
+  $('#deleteBtn').hidden = true;
   let last = Date.now();
   for (const ev of ['click', 'keydown', 'scroll', 'touchstart', 'mousemove']) addEventListener(ev, () => { last = Date.now(); }, { passive: true });
   setInterval(() => { if (Date.now() - last > 15 * 60 * 1000 || Date.now() > until.getTime()) logout(); }, 30000);

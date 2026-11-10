@@ -278,7 +278,7 @@ if (YesNo "mobile" "要設定手機和外出使用嗎？（之後也可以重新
 
             Say ""
             Say "【公用電腦】在外面沒裝 Tailscale 的電腦上看筆記：會開一個公開網址，但進去一定要先用你的手機掃 QR code 核准；"
-            Say "公用電腦只能瀏覽、2 小時後失效、閒置 15 分鐘自動登出。"
+            Say "公用電腦可以瀏覽筆記、新增筆記、叫 Agent 查資料，但不能核准別的登入或刪除草稿；2 小時後失效、閒置 15 分鐘自動登出。"
             if (YesNo "funnel" "要開啟公用電腦登入嗎？（執行 tailscale funnel，開放 8443 埠到網路上）" $false) {
                 $caps = @($st.Self.Capabilities)
                 if (-not $DryRunTailscale -and -not ($caps -contains "funnel")) {
