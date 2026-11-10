@@ -16,6 +16,7 @@
     <button data-tab="new" class="active">新增</button>
     <button data-tab="drafts">草稿 <span id="draftCount" class="badge" hidden></span></button>
     <button data-tab="notes">已上傳</button>
+    <button data-tab="tasks">待辦 <span id="taskCount" class="badge" hidden></span></button>
     <button data-tab="vault">筆記庫</button>
   </nav>
 </header>
@@ -126,7 +127,20 @@
       <div class="row"><span class="lbl">🔎 Agent</span><span id="agentState" class="hint"></span></div>
       <button type="button" id="agentBtn">讓 Agent 查資料</button>
     </div>
+    <details id="ansBox" class="box" hidden>
+      <summary><span class="lbl">💬 回答待釐清問題</span> <span id="ansCount" class="hint"></span></summary>
+      <p class="hint left">寫下你的回答，Agent 會帶著你的回答重新查資料、整理。可以用 [[筆記名稱]] 指向你的其他筆記，Agent 會一起參考。</p>
+      <div id="ansList"></div>
+      <div class="row gap"><button type="button" id="ansSave">只儲存回答</button><button type="button" id="ansRun" class="primary">儲存並讓 Agent 重查</button></div>
+    </details>
     <article id="readBody" class="md"></article>
+  </section>
+
+  <!-- 所有筆記的待辦事項 -->
+  <section id="tab-tasks" class="tab" hidden>
+    <div id="tList"></div>
+    <p id="tEmpty" class="empty" hidden>目前沒有未完成的待辦 🎉</p>
+    <details id="tDone" class="tdone" hidden><summary></summary><div id="tDoneList"></div></details>
   </section>
 
   <!-- 整個筆記庫（唯讀） -->

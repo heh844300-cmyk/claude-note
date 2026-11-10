@@ -114,7 +114,9 @@ function createVault({ CFG }) {
 
   function raw(rel) { const abs = safePath(rel, 'raw'); return { abs, type: RAW_EXT[path.extname(abs).toLowerCase()] }; }
 
-  return { list, readNote, resolve, search, raw, safePath };
+  const notes = () => allFiles().filter((f) => f.toLowerCase().endsWith('.md'));
+
+  return { list, readNote, resolve, search, raw, safePath, notes };
 }
 
 module.exports = { createVault };

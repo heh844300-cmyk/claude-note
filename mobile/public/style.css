@@ -136,3 +136,25 @@ main.login .actions button.danger { margin: 0; width: auto; }
 .pill.grp { margin-right: 6px; background: rgba(127,127,127,.15); }
 .list li.in-group { margin-left: 14px; border-left: 3px solid var(--accent); }
 .box.group { border-left: 3px solid var(--accent); }
+/* to-dos */
+.tgroup h3 { margin: 0 0 6px; font-size: 15px; }
+.task { display: flex; align-items: flex-start; gap: 10px; padding: 7px 0; cursor: pointer; }
+.task input { width: 20px; height: 20px; margin: 1px 0 0; flex: none; accent-color: var(--accent); }
+.task .tt { flex: 1; word-break: break-word; }
+.task.done .tt { color: var(--muted); text-decoration: line-through; }
+.due { flex: none; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.due.over { color: var(--danger); font-weight: 600; }
+.due.today { color: var(--accent); font-weight: 600; }
+.due.soon { color: var(--text); }
+.tnote { border: 0; background: none; padding: 2px 0; color: var(--accent); font-size: 14px; text-align: left; cursor: pointer; }
+.tfrom { margin: -4px 0 6px 30px; }
+.tfrom .tnote { font-size: 12px; color: var(--muted); }
+.tdone { margin-top: 14px; }
+.tdone summary { cursor: pointer; color: var(--muted); padding: 8px 0; }
+.tdrow { border-bottom: 1px solid var(--line); }
+/* answering open questions */
+#ansBox summary { cursor: pointer; list-style: none; padding: 4px 0; }
+#ansBox summary::-webkit-details-marker { display: none; }
+#ansBox .ans { margin: 10px 0; }
+#ansBox .aq { font-size: 14px; margin-bottom: 4px; word-break: break-word; }
+#ansBox textarea { width: 100%; box-sizing: border-box; font: inherit; }

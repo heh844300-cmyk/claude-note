@@ -167,7 +167,7 @@ function resolveTarget(vault, rel, origAbs) {
   const segs = norm.split('/');
   if (segs.some((s) => s === '..' || s === '' || s.startsWith('.'))) return null;          // no traversal, no .trash/.obsidian
   if (segs.slice(0, -1).some((s) => s.toLowerCase() === 'attachments')) return null;
-  if (!/\.md$/i.test(norm) || segs[segs.length - 1].toLowerCase() === 'airw-index.md') return null;
+  if (!/\.md$/i.test(norm) || ['airw-index.md', '待辦總覽.md'].includes(segs[segs.length - 1].toLowerCase())) return null;
   const abs = path.resolve(vault, ...segs);
   if (!abs.toLowerCase().startsWith(path.resolve(vault).toLowerCase() + path.sep)) return null;
   if (origAbs && abs.toLowerCase() === path.resolve(origAbs).toLowerCase()) return null;
@@ -258,6 +258,9 @@ async function createNote(file, u, { origLink, related, model, created, stamp })
 
 // content that this original note already contributed (a 補充 block, the 出自 header, or related:) -> don't add it again
 const alreadyFrom = (md, origLink) => md.includes(`出自 ${origLink}`) || md.includes(`"${origLink}"`);
+// does the target already contain this unit's text? (compares the first 80 non-space characters)
+const squash = (s) => String(s || '').replace(/\s+/g, '');
+const hasContent = (md, body) => { const k = squash(body).slice(0, 80); return !!k && squash(md).includes(k); };
 const hasExpiry = (md) => { const m = fmBlock(md); return !!(m && m[1].split('\n').some((l) => /^expires:\s*\S/.test(l) && !/^expires:\s*(never|null|永久)\s*$/i.test(l))); };
 
 // Apply the plan. Returns Map id -> { action, rel } where action is what actually happened.
@@ -285,7 +288,8 @@ async function applyPlan({ vault, notesDir, origAbs, units, plan, model, created
   // append, unless this original already contributed there (rerun) -> link; or the target will expire -> new note
   const append = async (t, fromNew = false) => {
     const md = (await readKeep(t)).md;
-    if (alreadyFrom(md, origLink)) return link(t);
+    // rerun: same content already there -> link; new content -> keep it in the original note rather than lose it
+    if (alreadyFrom(md, origLink)) return hasContent(md, cur.body) ? link(t) : { action: 'inline' };
     if (hasExpiry(md)) return fromNew ? link(t) : createNew(cur.title, [], [t]);
     await appendTo(t, cur, origLink, stamp);
     return { action: 'append', rel: toRel(vault, t) };
@@ -312,6 +316,7 @@ function renderMain(main, units, results) {
   const render = (id) => {
     const u = byId.get(id), r = results.get(id);
     if (!u || !r) return '';
+    if (used.has(id)) return r.action === 'inline' ? `（見上方「${u.title}」）` : linkTo(r.rel);   // a unit used twice: only a pointer
     used.add(id);
     if (r.action === 'inline') return demoteHeadings(unitBlock(u));
     const arrow = r.action === 'link' ? '已有筆記涵蓋' : r.action === 'append' ? '已補充到' : '詳見研究筆記';
@@ -325,6 +330,7 @@ function renderMain(main, units, results) {
   const rows = [];
   if (grp.new.length) rows.push('- 🆕 新增：' + grp.new.map(linkTo).join('、'));
   if (grp.append.length) rows.push('- ➕ 補充：' + grp.append.map(linkTo).join('、'));
+  grp.link = grp.link.filter((r) => !grp.new.includes(r) && !grp.append.includes(r));   // listed once, under what really happened
   if (grp.link.length) rows.push('- 🔗 已有筆記：' + grp.link.map(linkTo).join('、'));
   if (rows.length) out += '\n\n### 這次整理到的筆記\n' + rows.join('\n');
   return { text: out.trim(), counts: { new: grp.new.length, append: grp.append.length, link: grp.link.length } };

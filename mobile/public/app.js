@@ -26,6 +26,7 @@ function show(tab) {
   if (tab === 'drafts') loadDrafts();
   if (tab === 'notes') loadNotes();
   if (tab === 'vault' && !vaultShown) loadVault(vaultDir);
+  if (tab === 'tasks') loadTasks();
   window.scrollTo(0, 0);
 }
 document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => show(b.dataset.tab)));
@@ -305,7 +306,7 @@ document.addEventListener('click', async (e) => {
 async function openNote(name) {
   try {
     const md = await api('/api/notes/' + encodeURIComponent(name));
-    reading = name; $('#readBody').innerHTML = renderMd(md); show('read'); refreshAgent();
+    reading = name; $('#readBody').innerHTML = renderMd(md); show('read'); refreshAgent(); loadAnswers();
   } catch (err) { toast(err.message); }
 }
 async function refreshAgent() {
@@ -319,7 +320,7 @@ async function refreshAgent() {
   $('#agentBtn').disabled = !!busy;
   $('#agentBtn').textContent = j ? '重新讓 Agent 查資料' : '讓 Agent 查資料';
   if (busy) agentTimer = setTimeout(refreshAgent, 5000);
-  else if (j && j.status === 'done' && refreshAgent.was === 'busy') { try { $('#readBody').innerHTML = renderMd(await api('/api/notes/' + encodeURIComponent(reading))); } catch {} }
+  else if (j && j.status === 'done' && refreshAgent.was === 'busy') { try { $('#readBody').innerHTML = renderMd(await api('/api/notes/' + encodeURIComponent(reading))); } catch {} loadAnswers(); }
   refreshAgent.was = busy ? 'busy' : 'idle';
 }
 $('#agentBtn').onclick = async () => {
@@ -520,3 +521,76 @@ if (qs.has('note')) { const n = qs.get('note'); history.replaceState(null, '', '
 else if (qs.has('shared')) { toast(qs.get('shared') === '1' ? '已收到分享內容，Claude 整理中' : '分享失敗：沒有可用的內容', 3500); history.replaceState(null, '', '/'); show('drafts'); }
 else loadDrafts();
 loadSessions();
+
+// ---------- to-dos from every note ----------
+let taskData = null;
+const linkText = (s) => esc(s.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2').replace(/\[\[([^\]]+)\]\]/g, '$1').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1'));
+const dueLabel = (due, today) => {
+  if (!due) return '';
+  const days = Math.round((new Date(due) - new Date(today)) / 86400000);
+  const cls = days < 0 ? 'over' : days === 0 ? 'today' : days <= 3 ? 'soon' : '';
+  const word = days < 0 ? `過期 ${-days} 天` : days === 0 ? '今天' : days === 1 ? '明天' : `${due.slice(5).replace('-', '/')}`;
+  return `<span class="due ${cls}">📅 ${word}</span>`;
+};
+function taskRow(t, i, kind) {
+  return `<label class="task${t.done ? ' done' : ''}"><input type="checkbox" data-k="${kind}" data-i="${i}"${kind === 'done' ? ' checked' : ''}${document.body.classList.contains('kiosk-mode') ? ' disabled title="公用電腦只能查看"' : ''}>` +
+    `<span class="tt">${linkText(t.text)}</span>${kind === 'open' ? dueLabel(t.due, taskData.today) : t.doneAt ? `<span class="due">✅ ${t.doneAt.slice(5).replace('-', '/')}</span>` : ''}</label>`;
+}
+const noteHead = (t) => `<button type="button" class="tnote" data-path="${esc(t.path)}">📄 ${esc(t.name)}</button>`;
+async function loadTasks() {
+  try { taskData = await api('/api/tasks'); } catch (e) { return toast('讀取待辦失敗：' + e.message); }
+  const { open, done } = taskData;
+  const dated = open.map((t, i) => [t, i]).filter(([t]) => t.due), rest = open.map((t, i) => [t, i]).filter(([t]) => !t.due);
+  let html = '';
+  if (dated.length) html += `<div class="box tgroup"><h3>有到期日</h3>${dated.map(([t, i]) => taskRow(t, i, 'open') + `<div class="tfrom">${noteHead(t)}</div>`).join('')}</div>`;
+  const byNote = new Map();
+  for (const [t, i] of rest) { if (!byNote.has(t.path)) byNote.set(t.path, []); byNote.get(t.path).push([t, i]); }
+  for (const items of byNote.values()) html += `<div class="box tgroup">${noteHead(items[0][0])}${items.map(([t, i]) => taskRow(t, i, 'open')).join('')}</div>`;
+  $('#tList').innerHTML = html;
+  $('#tEmpty').hidden = open.length > 0;
+  $('#tDone').hidden = !done.length;
+  $('#tDone summary').textContent = `已完成（${taskData.doneTotal}）`;
+  $('#tDoneList').innerHTML = done.map((t, i) => `<div class="tdrow">${taskRow(t, i, 'done')}<div class="tfrom">${noteHead(t)}</div></div>`).join('');
+  const b = $('#taskCount'); b.textContent = open.length; b.hidden = !open.length;
+}
+$('#tab-tasks').addEventListener('click', (e) => { const n = e.target.closest('.tnote'); if (n) openVaultNote(n.dataset.path); });
+$('#tab-tasks').addEventListener('change', async (e) => {
+  const c = e.target; if (!c.matches('input[type=checkbox]')) return;
+  const t = taskData[c.dataset.k][+c.dataset.i];
+  c.disabled = true;
+  try {
+    await api('/api/tasks/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: t.path, line: t.line, raw: t.raw, done: c.checked }) });
+    toast(c.checked ? '已完成 ✅' : '已改回未完成');
+  } catch (err) { toast(err.message, 4000); }
+  loadTasks();
+});
+api('/api/tasks').then((d) => { const b = $('#taskCount'); b.textContent = d.open.length; b.hidden = !d.open.length; }).catch(() => {});
+
+// ---------- answering a note's open questions (and the to-dos the Agent said need you) ----------
+let ansItems = [];
+async function loadAnswers() {
+  const box = $('#ansBox');
+  try { ansItems = await api('/api/notes/' + encodeURIComponent(reading) + '/answers'); } catch { ansItems = []; }
+  box.hidden = !ansItems.length;
+  if (!ansItems.length) return;
+  const open = ansItems.filter((x) => !x.answer).length;
+  $('#ansCount').textContent = open ? `${open} 題還沒回答` : '都回答過了';
+  if (open) box.open = true;
+  $('#ansList').innerHTML = ansItems.map((x, i) => `<div class="ans"><div class="aq">${x.kind === 'q' ? '❓' : '🙋 待辦：'} ${linkText(x.text)}</div>` +
+    `<textarea rows="2" data-i="${i}" placeholder="我的回答…（留白就不回答）">${esc(x.answer)}</textarea></div>`).join('');
+}
+async function saveAnswers(runAgent) {
+  const list = ansItems.map((x, i) => ({ line: x.line, raw: x.raw, answer: $(`#ansList textarea[data-i="${i}"]`).value.trim() }));
+  if (runAgent && !list.some((x) => x.answer)) return toast('請先至少回答一題');
+  $('#ansSave').disabled = $('#ansRun').disabled = true;
+  try {
+    await api('/api/notes/' + encodeURIComponent(reading) + '/answers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers: list, agent: runAgent }) });
+    $('#readBody').innerHTML = renderMd(await api('/api/notes/' + encodeURIComponent(reading)));
+    await loadAnswers();
+    if (runAgent) { toast('已儲存回答，Agent 開始重查，完成後會通知你', 3500); refreshAgent.was = 'busy'; refreshAgent(); }
+    else toast('已儲存回答');
+  } catch (e) { toast('失敗：' + e.message, 4000); }
+  $('#ansSave').disabled = $('#ansRun').disabled = false;
+}
+$('#ansSave').onclick = () => saveAnswers(false);
+$('#ansRun').onclick = () => saveAnswers(true);
