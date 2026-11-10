@@ -1,11 +1,11 @@
 # Claude 筆記（Claude Note）
 
-![Version](https://img.shields.io/badge/version-V21.1-5b4bdb)
+![Version](https://img.shields.io/badge/version-V21.2-5b4bdb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/npm%20dependencies-0-brightgreen)
 ![Obsidian](https://img.shields.io/badge/Obsidian-vault-7c3aed?logo=obsidian&logoColor=white)
-![License](https://img.shields.io/badge/license-%5B請填入%5D-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
 > 把隨手的想法、照片交給 AI 整理成有結構的 **Obsidian** 筆記，再由一個會上網查資料的 **Agent** 處理筆記裡的待辦和疑問。筆記、設定、金鑰都只存在你自己的電腦。
 
@@ -222,6 +222,7 @@ git clone https://github.com/heh844300-cmyk/claude-note.git ClaudeNote
 ClaudeNote/
 ├── setup.cmd / update.cmd / uninstall.cmd   # 安裝精靈、更新、解除安裝（雙擊執行）
 ├── VERSION                                  # 版本號（大版本.小版本）
+├── LICENSE                                  # MIT 授權條款
 ├── prompt.md                                # AI 整理筆記的規則（可以自己改）
 ├── claude-note.bat / claude-note.ps1        # 電腦版：整理剪貼簿文字
 ├── setup/
@@ -286,4 +287,4 @@ ClaudeNote/
 
 ## 授權條款（License）
 
-[請填入授權條款，例如 MIT；目前倉庫沒有 LICENSE 檔]
+本專案以 [MIT License](LICENSE) 授權：可以自由使用、修改、散布，包括商業用途，只要保留原本的版權與授權聲明。軟體依「現狀」提供，不附任何保證。
