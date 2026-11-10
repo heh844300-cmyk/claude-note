@@ -98,10 +98,19 @@ if (process.env.CN_SELFTEST) { // used by the setup wizard: check the AI connect
 }
 
 // ---------- small json store ----------
+function renameRetrySync(from, to) {
+  for (let i = 0; ; i++) {
+    try { return fs.renameSync(from, to); }
+    catch (e) {
+      if (i >= 20 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25 * (i + 1)); // short synchronous pause
+    }
+  }
+}
 function store(file, init) {
   const f = path.join(CFG.dataRoot, file);
   let v; try { v = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { v = init; }
-  return { get: () => v, save: () => { fs.writeFileSync(f + '.tmp', JSON.stringify(v, null, 2)); fs.renameSync(f + '.tmp', f); } };
+  return { get: () => v, save: () => { fs.writeFileSync(f + '.tmp', JSON.stringify(v, null, 2)); renameRetrySync(f + '.tmp', f); } };
 }
 const subsStore = store('push-subs.json', []);
 const sentStore = store('reminders-sent.json', {});
@@ -141,7 +150,18 @@ async function saveDraft(d) {
   d.updatedAt = new Date().toISOString();
   const f = path.join(draftDir(d.id), 'draft.json');
   await fsp.writeFile(f + '.tmp', JSON.stringify(d, null, 2), 'utf8');
-  await fsp.rename(f + '.tmp', f);
+  await renameRetry(f + '.tmp', f);
+}
+// Windows: a rename onto a file that someone is reading at that moment (e.g. the app polling a draft) fails with
+// EPERM / EBUSY / EACCES for a few milliseconds — retry instead of failing the whole job
+async function renameRetry(from, to) {
+  for (let i = 0; ; i++) {
+    try { return await fsp.rename(from, to); }
+    catch (e) {
+      if (i >= 20 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) throw e;
+      await new Promise((r) => setTimeout(r, 25 * (i + 1)));
+    }
+  }
 }
 async function listDrafts() {
   const ids = await fsp.readdir(DRAFTS).catch(() => []);
@@ -646,7 +666,7 @@ async function runTerms(job) {
   const { start, end } = split.splittableRegion(md0);
   const region = md0.slice(start, end);
   const finish = (n) => { job.status = 'done'; job.counts = { terms: n }; job.finishedAt = new Date().toISOString(); agentStore.save(); };
-  if (region.trim().length < 200) return finish(0); // too short to hold a real explanation
+  if (!region.trim()) return finish(0);
   const out = await ai.plain({ prompt: split.termsPrompt(region), model: CFG.smallModel, timeoutMs: CFG.librarianTimeoutMs });
   await fsp.writeFile(path.join(AGENT_CWD, job.id + '.md'), utf8NoBom(out)).catch(() => {});
   const units = split.validTerms(library.parseResearch('=== MAIN ===\n\n' + out.replace(/\r/g, '')).units, region);

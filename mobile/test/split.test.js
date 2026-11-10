@@ -50,11 +50,12 @@ const region = md.slice(start, end);
 assert(region.includes(span) && !region.includes('相關概念') && !region.includes('Original notes'), 'region excludes 相關概念 and footers');
 const units = S.validTerms([
   { id: 'U1', title: 'WireGuard', summary: 'VPN 協定', body: span },
-  { id: 'U2', title: '短', summary: '', body: '太短的一句。' },
+  { id: 'U2', title: '不存在', summary: '', body: '正文裡沒有的一句話。' },
+  { id: 'U5', title: '週末', summary: '', body: '我打算週末設定好。' },
   { id: 'U3', title: '改寫', summary: '', body: span.replace('現代的', '新的') },
   { id: 'U4', title: '相關概念那行', summary: '', body: '- [[WireGuard]]：一種 VPN 協定，用公開金鑰加密建立點對點通道的那種東西' },
 ], region);
-assert(units.length === 1 && units[0].id === 'U1', 'only verbatim, substantive spans inside the region are kept');
+assert(units.map((u) => u.id).join() === 'U1,U5', 'verbatim spans inside the region are kept, whatever their length; rewritten / missing / 相關概念 dropped');
 const moved = [{ title: 'WireGuard', span, summary: 'VPN 協定', link: '[[Claude-Notes/研究/WireGuard|WireGuard]]' }];
 const r1 = S.applyTermReplacements(md, moved);
 assert(r1.count === 1 && r1.md.includes('VPN 協定（詳見 → [[Claude-Notes/研究/WireGuard|WireGuard]]）') && r1.md.includes('我打算週末設定好。'), 'span replaced with summary + link, rest untouched');
@@ -64,4 +65,7 @@ const r2 = S.applyTermReplacements(r1.md, moved);
 assert(r2.count === 0 && r2.md === r1.md, 'rerun is a no-op');
 const r3 = S.applyTermReplacements(md.replace('現代的', '新的'), moved);
 assert(r3.count === 0, 'edited span (no exact match) left alone');
+const bullet = '  - **容器化**：把程式和函式庫一起打包';
+const r4 = S.applyTermReplacements(`# t\n\n## 重點\n${bullet}\n- 其他\n`, [{ title: '容器化', span: bullet, summary: '打包技術。', link: '[[容器化]]' }]);
+assert(r4.md.includes('\n  - 打包技術。（詳見 → [[容器化]]）\n- 其他'), 'replaced bullet keeps its list marker and indent');
 fs.rmSync(dir, { recursive: true, force: true });
