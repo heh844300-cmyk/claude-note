@@ -19,6 +19,7 @@ const answers = require('./lib/answers');
 const { createRelated } = require('./lib/related');
 const refresh = require('./lib/refresh');
 const dedup = require('./lib/dedup');
+const series = require('./lib/series');
 
 // ---------- config ----------
 const ROOT = __dirname;
@@ -61,7 +62,8 @@ const CFG = {
   librarianModel: 'haiku',                        // decides where research goes; vault read-only, no web
   librarianTimeoutMs: 10 * 60 * 1000,
   fillAfterMs: 60 * 1000,                         // an empty note made by clicking a gray link is filled after 1 min untouched (0 = off)
-  dedupEveryDays: 7,                              // scan for duplicate research notes / gray links this often (0 = only by button)
+  updateCheckHours: 6,                            // check GitHub for a newer version this often, push once per new version (0 = off)
+  dedupEveryDays: 7,                            // scan for duplicate research notes / gray links this often (0 = only by button)
   termSplit: true,                                // after upload, move substantive term explanations into 研究/ notes
   vaultExclude: [],                               // vault folders hidden from the web app's vault browser, e.g. ["私人", "日記/2025"]
   bigTextChars: 1500,
@@ -251,6 +253,7 @@ function parseNote(result) {
     else if ((m = l.match(/^\s*REMIND:\s*(.+?)\s*[|｜]\s*(.*)$/))) (r.reminders = r.reminders || []).push({ at: m[1], text: m[2] });
     else if ((m = l.match(/^\s*REMIND:\s*(none|無)?\s*$/i))) r.reminders = r.reminders || [];
     else if ((m = l.match(/^\s*AGENT:\s*(\w+)/i))) r.agent = /^y/i.test(m[1]);
+    else if ((m = l.match(/^\s*SERIES:\s*(.*)$/i))) r.series = m[1].trim();
     else break; // not a header line: body starts here
   }
   r.body = lines.slice(i).join('\n').trim();
@@ -366,8 +369,12 @@ async function doOrganize(d) {
   d.stage = `${AI_NAME[CFG.provider] || 'AI'}（${modelLabel(d.model)}）整理中…`; await saveDraft(d);
   const instructions = await fsp.readFile(CFG.promptFile, 'utf8');
   const ctx = relatedContext((d.text || '') + '\n' + (d.transcript || ''));
-  const r = split.parseMulti(await askAI(d, instructions + HEADER_RULES(d) + MULTI_RULES + (ctx ? RELATED_RULES + ctx : '') + material(d)), parseNote);
-  if (!r.multi) return applyClaude(d, r.note, false);
+  // tracked notes: the user picked one ("接續到"), said none ('-'), or left it to the AI ('' -> every tracked note is offered)
+  const fixed = d.seriesPick && d.seriesPick !== '-' ? findSeries(d.seriesPick) : null;
+  const offered = d.seriesPick === '-' ? [] : fixed ? [fixed] : seriesList().slice(0, 4);
+  const sblock = seriesBlock(offered, fixed);
+  const r = split.parseMulti(await askAI(d, instructions + HEADER_RULES(d) + (fixed ? '' : MULTI_RULES) + (ctx ? RELATED_RULES + ctx : '') + sblock + material(d)), parseNote);
+  if (!r.multi) { applyClaude(d, r.note, false); applySeries(d, fixed ? fixed.note : offered.length ? r.note.series : null); return; }
   // several topics: this draft becomes the overview (keeps photos / raw text / transcript); one new draft per topic
   const topics = [];
   for (const [i, n] of r.notes.entries()) {
@@ -375,6 +382,7 @@ async function doOrganize(d) {
       text: '', images: [], audios: [], audioNames: [], transcript: null, title: '', tags: [], body: '', expires: null, reminders: [], agent: false,
       model: d.model, source: d.source, group: { role: 'topic', overviewId: d.id, index: i + 1, size: r.notes.length } };
     applyClaude(t, n, false);
+    applySeries(t, offered.length ? n.series : null);
     await fsp.mkdir(draftDir(t.id), { recursive: true });
     await saveDraft(t);
     topics.push(t.id);
@@ -401,8 +409,10 @@ async function doRevise(d, instruction) {
     '\n\n===== 修改模式 =====\n下面附上原始素材與「目前的草稿」（使用者可能已經手動修改過，包括到期與提醒）。請以目前草稿為基礎，依照「使用者的修改要求」調整，' +
     '保留使用者手動修改過的內容。到期、提醒、AGENT 若要求中沒有提到，就照抄目前的值。輸出格式完全同上。\n' + topicNote +
     (() => { const ctx = relatedContext((src.text || '') + '\n' + (src.transcript || '') + '\n' + d.title + '\n' + d.body); return ctx ? RELATED_RULES + ctx : ''; })() +
+    (() => { const s = d.series && findSeries(d.series); return s ? seriesBlock([s], s) : ''; })() +
     material(src) + '\n===== 目前的草稿 =====\n' + cur + '\n===== 目前的草稿結束 =====\n\n===== 使用者的修改要求 =====\n' + instruction + '\n';
   applyClaude(d, await askClaude(d, payload, src), true);
+  if (d.series) applySeries(d, d.series);
   d.revisions = (d.revisions || []).concat([{ instruction, at: new Date().toISOString() }]);
 }
 
@@ -431,6 +441,7 @@ async function createUpdateDraft(note) {
   const fm = parseFrontmatter(raw) || {};
   if (fm.generated_by !== 'claude-note') throw httpErr(400, '這篇不是由整理流程產生的筆記（例如你自己寫的），不能自動更新');
   if ((Array.isArray(fm.tags) ? fm.tags : []).includes('總覽')) throw httpErr(400, '總覽筆記是自動產生的目錄，不需要更新');
+  if (fm.series_of) throw httpErr(400, '每日紀錄不用這個功能更新');
   const dup = (await listDrafts()).find((x) => x.update && x.update.note === note);
   if (dup) throw httpErr(409, '這篇已經有一份更新草稿，請先到「草稿」處理');
   const id = new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + crypto.randomBytes(5).toString('hex');
@@ -489,7 +500,7 @@ async function updatableNotes() {
     if (!/\.md$/i.test(n) || pending.has(n)) continue;
     let raw; try { raw = await fsp.readFile(path.join(NOTES_DIR, n), 'utf8'); } catch { continue; }
     const fm = parseFrontmatter(raw) || {};
-    if (fm.generated_by !== 'claude-note' || (Array.isArray(fm.tags) ? fm.tags : []).includes('總覽')) continue;
+    if (fm.generated_by !== 'claude-note' || (Array.isArray(fm.tags) ? fm.tags : []).includes('總覽') || fm.series_of) continue;
     out.push(n);
   }
   return out;
@@ -529,6 +540,9 @@ async function createDraft(form) {
   const d = { id, createdAt: new Date().toISOString(), status: 'processing', stage: '排隊中…', error: '', text: '', images: [], audios: [],
     audioNames: [], transcript: null, title: '', tags: [], body: '', expires: null, reminders: [], agent: false, model: null,
     source: form.get('source') === 'share' ? 'share' : 'mobile' };
+  // "接續到": '' = let the AI decide, '-' = a normal note, otherwise a tracked note picked by the user
+  const pick = String(form.get('series') || '').trim();
+  d.seriesPick = pick === '-' ? '-' : (pick && findSeries(pick) ? findSeries(pick).note : '');
   let n = 0, skippedAudio = 0;
   for (const f of form.getAll('files')) {
     if (typeof f === 'string' || !f.size) continue;
@@ -570,25 +584,189 @@ const remindersFromFm = (fm) => normReminders((Array.isArray(fm.reminders) ? fm.
   const [at, ...rest] = s.split('|'); return { at, text: rest.join('|') };
 }));
 
+// ---------- tracked notes (持續追蹤): a main note + one day note per day ----------
+const fileSafe = (s) => String(s || '').replace(/[\\/:*?"<>|#^[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80);
+const noteLink = (file) => CFG.folder + '/' + file.replace(/\.md$/i, '');
+// every tracked main note, most recently changed first
+function seriesList() {
+  const out = [];
+  let names = []; try { names = fs.readdirSync(NOTES_DIR).filter((n) => /\.md$/i.test(n)); } catch {}
+  for (const n of names) {
+    let raw, st; try { raw = fs.readFileSync(path.join(NOTES_DIR, n), 'utf8'); st = fs.statSync(path.join(NOTES_DIR, n)); } catch { continue; }
+    const i = series.info(parseFrontmatter(raw.replace(/^﻿/, '')), n);
+    if (i) out.push({ ...i, mtime: st.mtimeMs });
+  }
+  return out.sort((a, b) => b.mtime - a.mtime);
+}
+// by file name, title or entry name (what the AI or the app sends)
+function findSeries(x) {
+  const k = String(x || '').trim().replace(/^\[\[|\]\]$/g, '').replace(/\|.*$/, '').replace(/^.*\//, '').replace(/\.md$/i, '').toLowerCase();
+  if (!k || /^(none|無|-)$/.test(k)) return null;
+  return seriesList().find((s) => [s.note.replace(/\.md$/i, ''), s.title, s.name].some((v) => String(v).toLowerCase() === k)) || null;
+}
+// day notes of a main note, oldest first: [{ date, file, md }]
+function seriesEntries(note) {
+  const out = [];
+  let names = []; try { names = fs.readdirSync(NOTES_DIR).filter((n) => /^\d{4}-\d{2}-\d{2} .*\.md$/i.test(n)); } catch {}
+  for (const n of names) {
+    let raw; try { raw = fs.readFileSync(path.join(NOTES_DIR, n), 'utf8').replace(/^﻿/, ''); } catch { continue; }
+    if (!/\nseries_of:/.test(raw.slice(0, 2000))) continue;
+    if ((parseFrontmatter(raw) || {}).series_of !== note) continue;
+    out.push({ date: n.slice(0, 10), file: n, md: raw });
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date) || a.file.localeCompare(b.file));
+}
+// organizer context: each offered main note with its two latest entries
+function seriesBlock(list, fixed) {
+  const items = [];
+  for (const s of list) {
+    let md; try { md = fs.readFileSync(path.join(NOTES_DIR, s.note), 'utf8'); } catch { continue; }
+    items.push({ info: s, md, entries: seriesEntries(s.note).slice(-2) });
+  }
+  return series.organizerBlock(items, fixed ? fixed.title : null);
+}
+// a draft that continues a tracked note: fixed entry name, never expires, no own reminders (the main note has the meeting)
+function applySeries(d, pick) {
+  const s = pick ? findSeries(pick) : null;
+  d.series = s ? s.note : null;
+  if (s) { d.title = s.name; d.expires = null; d.reminders = []; }
+}
+const openTodos = (mds) => mds.flatMap((md) => tasks.parseTasks(md).filter((t) => !t.done).map((t) => tasks.cleanText(t.text)));
+
+async function writeKept(abs, md, k) { await fsp.writeFile(abs + '.cn-tmp', dedup.writeKeep(md, k), 'utf8'); await renameRetry(abs + '.cn-tmp', abs); }
+// one line for the index: links as plain text (a cut must never break a [[link]]), no leading date, ≤ 60 chars
+const plainSummary = (s, date) => { const t = String(s || '').replace(/\[\[[^\]|]*\|([^\]]*)\]\]/g, '$1').replace(/\[\[([^\]]*)\]\]/g, '$1').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+  .replace(/\s+/g, ' ').trim().replace(new RegExp('^' + date + '\\s*[，,、：:]?\\s*'), ''); return t.length > 60 ? t.slice(0, 59) + '…' : t; };
+// list a day note in the main note's "## 每日紀錄"
+async function indexEntry(s, file, summary, replace) {
+  const abs = path.join(NOTES_DIR, s.note);
+  const raw = await fsp.readFile(abs, 'utf8').catch(() => null);
+  if (raw == null) return;
+  const k = dedup.readKeep(raw);
+  const date = file.slice(0, 10);
+  const md = series.addEntryLink(k.md, { target: noteLink(file), label: `${date}（${series.weekdayOf(date)}）`, summary: plainSummary(summary, date) }, replace);
+  if (md !== k.md) await writeKept(abs, md, k);
+}
+// today's day note (created with only the back-link when missing)
+async function ensureDayNote(s, date, { model, tags } = {}) {
+  const file = `${date} ${fileSafe(s.name) || 'note'}.md`, abs = path.join(NOTES_DIR, file);
+  if (!fs.existsSync(abs)) {
+    let mainFm = {}; try { mainFm = parseFrontmatter(fs.readFileSync(path.join(NOTES_DIR, s.note), 'utf8').replace(/^﻿/, '')) || {}; } catch {}
+    const t = tags || (Array.isArray(mainFm.tags) ? mainFm.tags : []);
+    await fsp.writeFile(abs, utf8NoBom(series.dayNote({ title: file.replace(/\.md$/i, ''), created: localISO(new Date()), mainFile: s.note,
+      mainLink: noteLink(s.note), mainTitle: s.title, tags: t, model: model || modelLabel(CFG.smallModel) })), { flag: 'wx' }).catch((e) => { if (e.code !== 'EEXIST') throw e; });
+  }
+  return { file, abs };
+}
+const hasContent = (md) => /^##\s*摘要\s*$/m.test(md) || /^##\s*補充/m.test(md);
+
+async function uploadSeriesEntry(d) {
+  const s = findSeries(d.series);
+  if (!s) throw httpErr(409, '要接續的主筆記已不存在或已停止追蹤，請在「接續到」改選「不接續」');
+  // the day it was written (written Monday night, uploaded Tuesday morning -> Monday's note), the time of this upload
+  const date = localISO(new Date(d.createdAt || Date.now())).slice(0, 10), hhmm = localISO(new Date()).slice(11);
+  const tags = d.tags.filter((t) => t && t !== 'claude-note');
+  const { file, abs } = await ensureDayNote(s, date, { model: modelLabel(d.model), tags });
+  const k = dedup.readKeep(await fsp.readFile(abs, 'utf8'));
+  const embeds = await copyImages(d, date);
+  const fresh = !hasContent(k.md);           // a new day note, or one with only the meeting report so far
+  let md;
+  if (fresh) {
+    md = k.md.replace(/\s*$/, '\n\n') + d.body.trim() + '\n';
+    if (embeds.length) md += '\n## 附件照片\n\n' + embeds.join('\n\n') + '\n';
+    md += footerOf(d, '');
+  } else {
+    const body = d.body.trim() + (embeds.length ? '\n\n### 照片\n\n' + embeds.join('\n\n') : '');
+    md = series.appendToDay(k.md, body, hhmm, footerOf(d, `（${hhmm}）`).replace(/^\n---\n/, ''));
+  }
+  await writeKept(abs, md, k);
+  await fsp.rm(draftDir(d.id), { recursive: true, force: true });
+  log('uploaded', d.id, '-> entry', file, 'of', s.note);
+  await indexEntry(s, file, split.summaryOf(d.body), fresh).catch((e) => log('series index failed', e.message));
+  if (d.agent && hasOpenWork(d.body) && agentAvailable()) enqueueAgent(file, 'auto');
+  return file;
+}
+
+// the report before a meeting: written into today's day note, pushed to the phone. Not in the Agent queue (a long
+// research job would make it late); one at a time per note.
+const reportBusy = new Set();
+async function writeReport(s, date) {
+  if (reportBusy.has(s.note)) throw httpErr(409, '報告正在產生中，請稍候');
+  reportBusy.add(s.note);
+  try {
+    const mainMd = await fsp.readFile(path.join(NOTES_DIR, s.note), 'utf8').catch(() => { throw httpErr(404, '找不到主筆記'); });
+    const prev = series.prevMeetingDay(s.days, date);
+    const all = seriesEntries(s.note).filter((e) => e.date <= date);
+    const recent = all.filter((e) => !prev || e.date >= prev);
+    const use = (recent.length ? recent : all.slice(-2)).slice(-5);
+    let body, short;
+    try {
+      const out = await ai.plain({ prompt: series.reportPrompt({ info: s, mainMd, entries: use, today: date, prev }), model: CFG.smallModel, timeoutMs: CFG.librarianTimeoutMs });
+      const p = series.parseReport(out);
+      if (!p) throw new Error('看不懂 AI 的回覆：' + String(out).slice(0, 120));
+      ({ body, short } = p);
+    } catch (e) {
+      log('series report: AI failed, using the raw notes:', e.message);
+      body = series.fallbackReport(use, openTodos([mainMd, ...use.map((x) => x.md)]));
+      short = 'AI 沒有產生報告，已先整理最近的紀錄';
+    }
+    const { file, abs } = await ensureDayNote(s, date);
+    const k = dedup.readKeep(await fsp.readFile(abs, 'utf8'));
+    await writeKept(abs, series.upsertReport(k.md, `> 📣 ${localISO(new Date()).replace('T', ' ')} 自動整理的報告草稿，開會前看一下，照實際情況調整。\n\n${body}`), k);
+    await indexEntry(s, file, hasContent(k.md) ? '' : '例會報告草稿', false).catch(() => {});
+    log('series report written', file);
+    await notify(`📣 ${s.time ? s.time + ' ' : ''}例會報告草稿`, short || s.name, '/?note=' + encodeURIComponent(file));
+    return { note: file };
+  } finally { reportBusy.delete(s.note); }
+}
+// from scan(): start the reports that are due (never twice for the same meeting, even after a restart)
+function seriesTick() {
+  const now = new Date();
+  for (const s of seriesList()) {
+    const due = series.dueReport(s, now);
+    if (!due) continue;
+    const sent = sentStore.get(), key = `series|${s.note}|${due.date}`;
+    if (sent[key]) continue;
+    sent[key] = 'started ' + now.toISOString(); sentStore.save();
+    log('series report due', s.note, due.date);
+    writeReport(s, due.date).catch((e) => log('series report failed', s.note, e.message));
+  }
+}
+
 // ---------- upload to vault ----------
+async function copyImages(d, date) {
+  const embeds = [];
+  if (!d.images.length) return embeds;
+  await fsp.mkdir(ATTACH_DIR, { recursive: true });
+  for (const [i, f] of d.images.entries()) {
+    const target = `${date.replace(/-/g, '')}-${d.id.slice(-10)}-${i + 1}${path.extname(f)}`;
+    await fsp.copyFile(path.join(draftDir(d.id), f), path.join(ATTACH_DIR, target));
+    embeds.push(`![[${target}]]`);
+  }
+  return embeds;
+}
+// "Original notes" / transcript at the end of a note (suffix: e.g. "（21:30）" for a later input of the same day)
+function footerOf(d, suffix) {
+  let md = '';
+  if (d.text && d.text.trim()) md += `\n---\n\n<details><summary>Original notes${suffix}</summary>\n\n` + d.text.trim() + '\n\n</details>\n';
+  if (d.transcript) md += `\n<details><summary>錄音逐字稿${suffix}</summary>\n\n` + d.transcript.trim() + '\n\n</details>\n';
+  return md;
+}
 const hasOpenWork = (body) => /^\s*-\s*\[ \]\s+\S/m.test(body) || /##\s*待釐清問題\s*\n+\s*[-*\d]/.test(body);
 async function uploadDraft(d) {
   await fsp.mkdir(NOTES_DIR, { recursive: true });
   const now = new Date(); const stamp = localISO(now); const date = stamp.slice(0, 10);
   const safe = (d.title || '').replace(/[\\/:*?"<>|#^[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'note';
   if (d.group && d.group.role === 'overview' && !d.body) throw httpErr(400, '總覽會在這一組的主題都上傳後自動建立');
+  if (d.series) {                                     // continues a tracked note: goes into today's day note
+    const name = await uploadSeriesEntry(d);
+    if (d.group && d.group.role === 'topic') await finalizeGroup(d.group.overviewId, { id: d.id, file: name, title: name.replace(/\.md$/i, ''), summary: split.summaryOf(d.body) });
+    return name;
+  }
   let file = path.join(NOTES_DIR, `${date} ${safe}.md`);
   for (let n = 2; fs.existsSync(file); n++) file = path.join(NOTES_DIR, `${date} ${safe} (${n}).md`);
 
-  const embeds = [];
-  if (d.images.length) {
-    await fsp.mkdir(ATTACH_DIR, { recursive: true });
-    for (const [i, f] of d.images.entries()) {
-      const target = `${date.replace(/-/g, '')}-${d.id.slice(-10)}-${i + 1}${path.extname(f)}`;
-      await fsp.copyFile(path.join(draftDir(d.id), f), path.join(ATTACH_DIR, target));
-      embeds.push(`![[${target}]]`);
-    }
-  }
+  const embeds = await copyImages(d, date);
   const tags = ['claude-note', ...d.tags.filter((t) => t && t !== 'claude-note')];
   let md = '---\n' + `title: ${yamlStr(d.title)}\n` + `created: ${stamp}\n` +
     `source: ${yamlStr(d.source === 'share' ? 'mobile-share' : 'mobile')}\n` + 'generated_by: claude-note\n' +
@@ -598,8 +776,7 @@ async function uploadDraft(d) {
     'tags:\n' + tags.map((t) => '  - ' + yamlStr(t.replace(/"/g, ''))).join('\n') + '\n' +
     '---\n\n' + `# ${d.title}\n\n` + d.body.trim() + '\n';
   if (embeds.length) md += '\n## 附件照片\n\n' + embeds.join('\n\n') + '\n';
-  if (d.text && d.text.trim()) md += '\n---\n\n<details><summary>Original notes</summary>\n\n' + d.text.trim() + '\n\n</details>\n';
-  if (d.transcript) md += '\n<details><summary>錄音逐字稿</summary>\n\n' + d.transcript.trim() + '\n\n</details>\n';
+  md += footerOf(d, '');
   await fsp.writeFile(file, utf8NoBom(md));
   await fsp.rm(draftDir(d.id), { recursive: true, force: true });
   const name = path.basename(file);
@@ -667,6 +844,11 @@ async function notify(title, body, url = '/') {
   return ok;
 }
 
+// ---------- version (bottom-right of the app) + "a new version is on GitHub" push ----------
+const version = require('./lib/version').createVersion({ repoDir: path.join(ROOT, '..'), log,
+  notified: { has: (sha) => !!sentStore.get()['update|' + sha], add: (sha) => { sentStore.get()['update|' + sha] = new Date().toISOString(); sentStore.save(); } },
+  onNew: (s) => notify(`🆕 Claude 筆記有新版本 ${s.latest.version}`, `${s.latest.subject}\n在電腦上雙擊 ClaudeNote 資料夾裡的 update.cmd 就會更新（目前是 ${s.version}）`, '/') });
+
 // ---------- public-entrance login ----------
 const vault = createVault({ CFG });
 const related = createRelated({ vault });
@@ -713,6 +895,7 @@ async function scan() {
     }
     if (dirty) sentStore.save();
     if (CFG.fillAfterMs > 0 && agentAvailable()) scanFill();
+    try { seriesTick(); } catch (e) { log('series tick error', e.message); }
   } catch (e) { log('scan error', e.message); }
   finally { scanning = false; }
 }
@@ -1192,6 +1375,11 @@ function applyEdits(d, b) {
   if ('expires' in b) d.expires = normExpiry(b.expires);
   if (Array.isArray(b.reminders)) d.reminders = normReminders(b.reminders);
   if (typeof b.agent === 'boolean') d.agent = b.agent;
+  // "接續到" changed on the draft (not for update drafts): '' / '-' = a normal note
+  if ('series' in b && !d.update && (b.series || null) !== (d.series || null)) {
+    if (!b.series || b.series === '-') d.series = null;
+    else { const s = findSeries(b.series); if (!s) throw httpErr(400, '找不到這篇持續追蹤的筆記'); applySeries(d, s.note); }
+  }
 }
 function checkTimes(d) {
   const last = d.reminders.map((r) => r.at).sort().pop();
@@ -1201,7 +1389,8 @@ const summary = (d) => ({ id: d.id, createdAt: d.createdAt, updatedAt: d.updated
   title: d.title, preview: (d.title ? '' : (d.text || '').slice(0, 60)), images: d.images.length, audios: (d.audioNames || []).length,
   expires: d.expires, reminders: (d.reminders || []).length,
   group: d.group ? { role: d.group.role, index: d.group.index || 0, size: d.group.size, overviewId: d.group.overviewId || d.id } : null,
-  update: d.update ? { note: d.update.note, warnings: d.update.warnings || [] } : null });
+  update: d.update ? { note: d.update.note, warnings: d.update.warnings || [] } : null,
+  series: d.series ? (findSeries(d.series) || { name: d.series }).name : null });
 
 async function route(req, res) {
   const url = new URL(req.url, 'http://local');
@@ -1210,6 +1399,8 @@ async function route(req, res) {
 
   if (p[1] === 'api') {
     if (p[2] === 'health') return send(res, 200, { ok: true });
+    if (p[2] === 'version' && !p[3] && M === 'GET') return send(res, 200, version.get());
+    if (p[2] === 'version' && p[3] === 'check' && M === 'POST') return send(res, 200, await version.check());
     if (p[2] === 'features') {
       // connection addresses for the 「連線網址」 box (phone via Tailscale, public computer via Funnel)
       const mobileUrl = CFG.publicUrl || '', publicPcUrl = CFG.publicPort && CFG.funnelUrl ? CFG.funnelUrl : '';
@@ -1344,6 +1535,40 @@ async function route(req, res) {
         try { names.push(await uploadUpdate(d)); } catch (e) { skipped.push({ note: d.update.note, error: e.message }); }
       }
       return send(res, 200, { names, skipped });
+    }
+    // tracked notes: list, mark / change / stop, write today's report now
+    if (p[2] === 'series' && !p[3] && M === 'GET') {
+      return send(res, 200, seriesList().map((s) => ({ note: s.note, title: s.title, name: s.name, days: s.days, daysLabel: series.daysLabel(s.days), time: s.time, start: s.start, lead: s.lead })));
+    }
+    if (p[2] === 'notes' && p[3] && p[4] === 'series' && !p[5] && M === 'POST') {
+      if (p[3].includes('/')) throw httpErr(400, '研究/ 裡的名詞筆記不能設為持續追蹤');
+      const file = safeNote(p[3]);
+      const raw = await fsp.readFile(file, 'utf8').catch(() => { throw httpErr(404, '找不到筆記'); });
+      const k = dedup.readKeep(raw), fm = parseFrontmatter(k.md) || {};
+      if (fm.series_of) throw httpErr(400, '這篇是每日紀錄，請到它的主筆記設定');
+      const b = await readJson(req);
+      const keys = ['series', 'series_name', 'series_days', 'series_time', 'series_start', 'series_lead'];
+      let fields;
+      if (b.on === false) fields = Object.fromEntries(keys.map((x) => [x, null]));
+      else {
+        const days = series.parseDays(Array.isArray(b.days) ? b.days.join(',') : b.days);
+        const time = series.normTime(b.time);
+        if (b.time && !time) throw httpErr(400, '時間格式要像 12:10');
+        if (time && !days.length) throw httpErr(400, '請至少選一天');
+        const name = fileSafe(b.name).slice(0, 30);
+        if (!name) throw httpErr(400, '請填每日紀錄的名稱');
+        fields = { series: 'true', series_name: name, series_days: series.formatDays(days.length ? days : [1, 2, 3, 4, 5]), series_time: time || null,
+          series_start: /^\d{4}-\d{2}-\d{2}$/.test(b.start || '') ? b.start : null, series_lead: null,
+          expires: null };                                // a tracked note is kept: its day notes link to it
+      }
+      await writeKept(file, series.setFrontmatter(k.md, fields), k);
+      log('series', b.on === false ? 'off' : 'on', p[3]);
+      return send(res, 200, { ok: true, series: series.info(parseFrontmatter(series.setFrontmatter(k.md, fields)), p[3]) });
+    }
+    if (p[2] === 'notes' && p[3] && p[4] === 'series' && p[5] === 'report' && M === 'POST') {
+      const s = findSeries(p[3]);
+      if (!s) throw httpErr(400, '這篇不是持續追蹤的筆記');
+      return send(res, 200, await writeReport(s, series.localDate(new Date())));
     }
     // the user's answers to 待釐清問題 / 🙋 to-dos; saving can start a new Agent run that uses them
     if (p[2] === 'notes' && p[3] && p[4] === 'answers') {
@@ -1516,6 +1741,8 @@ async function publicRoute(req, res) {
       if (days > 0 && agentAvailable() && (!last || Date.now() - Date.parse(last) >= days * 86400000)) dedupScan('weekly').catch((e) => log('dedup weekly failed:', e.message));
     };
     setTimeout(weekly, 5 * 60 * 1000); setInterval(weekly, 3600 * 1000);
+    version.local().then((v) => log('version', v.version || '(unknown)', v.sha || ''));
+    if (CFG.updateCheckHours > 0) { setTimeout(() => version.check(), 60 * 1000); setInterval(() => version.check(), CFG.updateCheckHours * 3600 * 1000); }
   });
   if (CFG.publicPort) http.createServer((req, res) => {
     publicRoute(req, res).catch((e) => {

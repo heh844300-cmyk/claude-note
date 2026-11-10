@@ -36,6 +36,9 @@
         <label class="pick">📄 文字檔<input type="file" id="pickTxt" accept=".txt,.md,text/plain" multiple></label>
       </div>
       <ul id="fileList" class="files"></ul>
+      <label class="field" id="newSeriesRow" hidden>📌 接續到
+        <select id="newSeries"></select>
+      </label>
       <button type="submit" class="primary" id="submitBtn">交給 Claude 整理</button>
       <p class="hint">送出後可以關掉 app，整理好的草稿會出現在「草稿」。</p>
     </form>
@@ -81,6 +84,11 @@
     <div id="updateBox" class="box group" hidden>
       <div id="updateText" class="hint left"></div>
       <ul id="updateWarn" class="warnlist"></ul>
+    </div>
+    <div id="seriesBox" class="box group nogroup-ov" hidden>
+      <label class="field">📌 接續到<select id="edSeries"></select></label>
+      <p id="seriesHint" class="hint left"></p>
+      <button type="button" id="seriesRedo" class="small" hidden>依新的選擇重新整理</button>
     </div>
     <div id="editImages" class="thumbs"></div>
     <label class="field">標題<input id="edTitle" type="text"></label>
@@ -146,6 +154,16 @@
       <button type="button" id="agentBtn">讓 Agent 查資料</button>
       <button type="button" id="refreshBtn" class="nokiosk" hidden>🔄 用最新規則更新這篇</button>
     </div>
+    <details id="trackBox" class="box nokiosk" hidden>
+      <summary><span class="lbl">📌 持續追蹤</span> <span id="trackState" class="hint"></span></summary>
+      <p class="hint left">每天（或每次）要記錄進度的事，例如例會、長期專案。設定後，之後新增的內容會變成這篇底下的每日紀錄，AI 會自動帶入這篇的前提，不用重打；也可以在例會前 30 分鐘自動整理報告草稿並通知你。</p>
+      <label class="field">每日紀錄的名稱（檔名會是「日期 名稱」）<input id="trName" type="text" placeholder="例如：例會進度"></label>
+      <div class="field">例會的日子<div id="trDays" class="days"></div></div>
+      <label class="field">例會時間（留白就不自動整理報告）<input id="trTime" type="time"></label>
+      <label class="field">從哪天開始<input id="trStart" type="date"></label>
+      <div class="row gap"><button type="button" id="trSave" class="primary">儲存</button><button type="button" id="trNew" hidden>＋ 新增今天的進度</button></div>
+      <div class="row gap"><button type="button" id="trReport" hidden>立即整理今天的報告</button><button type="button" id="trOff" class="danger" hidden>停止追蹤</button></div>
+    </details>
     <details id="ansBox" class="box" hidden>
       <summary><span class="lbl">💬 回答待釐清問題</span> <span id="ansCount" class="hint"></span></summary>
       <p class="hint left">寫下你的回答，Agent 會帶著你的回答重新查資料、整理。可以用 [[筆記名稱]] 指向你的其他筆記，Agent 會一起參考。</p>
@@ -181,6 +199,7 @@
   </section>
 </main>
 
+<button type="button" id="verBadge" class="ver" hidden></button>
 <div id="toast" hidden></div>
 <script src="app.js"></script>
 </body>

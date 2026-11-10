@@ -8,14 +8,14 @@ const tasks = require('./tasks');
 const answers = require('./answers');
 
 const norm = (s) => String(s || '').replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase();
-const END_RES = [/\n## Agent 研究結果[ \t]*\n/, /\n## 附件照片[ \t]*\n/, /\n---\n\n<details>/, /\n<details>/];
+const END_RES = [/\n## 每日紀錄[ \t]*\n/, /\n## Agent 研究結果[ \t]*\n/,/\n## 附件照片[ \t]*\n/, /\n---\n\n<details>/, /\n<details>/];
 
 // split a note (LF, no BOM) into head | body | tail
 function regions(md) {
   const t = md.match(/^# .*$/m);
   let start = t ? t.index + t[0].length : (md.match(/^---\n[\s\S]*?\n---\n/) || [''])[0].length;
-  // keep "> 🧩 …" back-link lines (and the blank lines around them) in the head
-  const after = md.slice(start).match(/^(\s*\n>\s*🧩[^\n]*)+/);
+  // keep "> 🧩 …" / "> 📌 …" back-link lines (and the blank lines around them) in the head
+  const after = md.slice(start).match(/^(\s*\n>\s*(?:🧩|📌)[^\n]*)+/);
   if (after) start += after[0].length;
   const rest = md.slice(start);
   const end = Math.min(...END_RES.map((re) => { const i = rest.search(re); return i >= 0 ? start + i : md.length; }));

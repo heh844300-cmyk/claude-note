@@ -46,6 +46,9 @@ function createRelated({ vault }) {
       if (SKIP.has(path.posix.basename(rel).toLowerCase()) || ex.has(rel.toLowerCase())) continue;
       let md; try { md = vault.readNote(rel); } catch { continue; }
       if (md.trim().length < 20) continue;                  // empty notes (gray links not filled yet)
+      // daily entries of a tracked note: dozens of near-identical logs would crowd out real context
+      // (an entry's own organizer gets its main note and recent entries explicitly)
+      if (/^﻿?---\r?\n[\s\S]*?\nseries_of:/.test(md)) continue;
       const name = path.posix.basename(rel, '.md');
       out.push({ rel, name, md, tf: terms(name + '\n' + cleanBody(md)), nameTerms: terms(name) });
     }

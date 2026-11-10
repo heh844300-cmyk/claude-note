@@ -169,3 +169,10 @@ button.wide { width: 100%; margin-bottom: 10px; }
 .dlist { list-style: none; padding: 0; margin: 10px 0 0; }
 .dlist li { border-top: 1px solid var(--line); padding: 10px 0; }
 #dedupScan { width: 100%; }
+.field select { display: block; width: 100%; margin-top: 4px; color: var(--text); }
+.days { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.days label { display: inline-flex; align-items: center; gap: 4px; color: var(--text); font-size: 14px; }
+.ver { position: fixed; right: 8px; bottom: max(6px, env(safe-area-inset-bottom)); z-index: 5; padding: 3px 8px; font-size: 11px; line-height: 1.4;
+  color: var(--muted); background: var(--bg); border: 1px solid var(--line, rgba(127,127,127,.3)); border-radius: 999px; opacity: .85; width: auto; min-height: 0; }
+.ver.new { color: var(--accent-text); background: var(--accent, #5b4bdb); border-color: transparent; opacity: 1; font-weight: 600; }
+main { padding-bottom: 36px; }

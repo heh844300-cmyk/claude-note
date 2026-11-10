@@ -27,6 +27,7 @@ function show(tab) {
   if (tab === 'notes') loadNotes();
   if (tab === 'vault' && !vaultShown) loadVault(vaultDir);
   if (tab === 'tasks') loadTasks();
+  if (tab === 'new') loadSeries();
   window.scrollTo(0, 0);
 }
 document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => show(b.dataset.tab)));
@@ -51,12 +52,13 @@ $('#newForm').addEventListener('submit', async (e) => {
   if (!text && !picked.length) return toast('請輸入文字或附加檔案');
   const fd = new FormData();
   fd.append('text', text);
+  fd.append('series', $('#newSeries').value || '');
   picked.forEach((f) => fd.append('files', f, f.name));
   const btn = $('#submitBtn'); btn.disabled = true; btn.textContent = '傳送中…';
   try {
     await api('/api/drafts', { method: 'POST', body: fd });
     $('#newText').value = ''; try { localStorage.removeItem('newText'); } catch {}
-    picked = []; renderPicked();
+    picked = []; renderPicked(); $('#newSeries').value = '';
     toast('已送出，Claude 整理中');
     show('drafts');
   } catch (err) { toast('送出失敗：' + err.message, 5000); }
@@ -72,7 +74,7 @@ async function loadDrafts() {
   const b = $('#draftCount'); b.hidden = !list.length; b.textContent = list.length;
   if (current === 'drafts') {
     $('#draftEmpty').hidden = list.length > 0;
-    const grp = (d) => d.update ? `<span class="pill grp">🔄 更新${d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length ? '・⚠️' + d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length : ''}</span>` : !d.group ? '' : d.group.role === 'overview' ? `<span class="pill grp">📑 總覽・${d.group.size} 篇</span>` : `<span class="pill grp">🧩 ${d.group.index}／${d.group.size}</span>`;
+    const grp = (d) => (d.series ? `<span class="pill grp">📌 ${esc(d.series)}</span>` : '') + (d.update ? `<span class="pill grp">🔄 更新${d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length ? '・⚠️' + d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length : ''}</span>` : !d.group ? '' : d.group.role === 'overview' ? `<span class="pill grp">📑 總覽・${d.group.size} 篇</span>` : `<span class="pill grp">🧩 ${d.group.index}／${d.group.size}</span>`);
     $('#draftList').innerHTML = list.map((d) => `<li data-id="${d.id}"${d.group && d.group.role === 'topic' ? ' class="in-group"' : ''}>
       <div class="t">${grp(d)}${esc(d.title || d.preview || '（未命名）')}</div>
       <div class="m"><span class="pill ${d.status}">${STATUS[d.status] || d.status}</span>${esc(d.status === 'processing' ? d.stage : fmtTime(d.createdAt))}
@@ -136,8 +138,39 @@ function fillEdit() {
   $('#edAgent').checked = !!draft.agent;
   $('#edModel').textContent = draft.model ? `整理模型：${draft.model === 'haiku' ? 'Haiku（輕量）' : draft.model === 'sonnet' ? 'Sonnet' : draft.model}` : '';
   setMode('edit'); updateStatus(); checkTimes();
-  fillGroup(); fillUpdate();
+  fillGroup(); fillUpdate(); fillSeries();
 }
+// ---- 接續到: which tracked note this draft continues ----
+function fillSeries() {
+  const box = $('#seriesBox');
+  box.hidden = !!draft.update || draft.status === 'processing' || !(seriesData.length || draft.series) || !!(draft.group && draft.group.role === 'overview');
+  if (box.hidden) return;
+  const known = seriesData.some((s) => s.note === draft.series);
+  $('#edSeries').innerHTML = '<option value="-">不接續（一般筆記）</option>' + seriesData.map((s) => `<option value="${esc(s.note)}">📌 ${esc(s.name)}（${esc(s.title)}）</option>`).join('') +
+    (draft.series && !known ? `<option value="${esc(draft.series)}">⚠️ ${esc(draft.series)}（主筆記已不存在）</option>` : '');
+  $('#edSeries').value = draft.series || '-';
+  $('#seriesRedo').hidden = true;
+  seriesHint();
+}
+function seriesHint() {
+  const v = $('#edSeries').value, s = seriesData.find((x) => x.note === v);
+  $('#seriesHint').textContent = !s ? '會存成一般筆記。'
+    : `會存成今天的「${s.name}」紀錄，並列進主筆記的「每日紀錄」；今天已經有紀錄的話，會接在後面。` + (v === draft.series && !draft.seriesPick ? '（這是 AI 判斷的，不對可以改。）' : '');
+  $('#edTitle').disabled = !!s || draft.status === 'processing' || !!draft.update;
+  if (s) $('#edTitle').value = s.name;
+}
+$('#edSeries').onchange = () => {
+  dirty = true; seriesHint();
+  const changed = $('#edSeries').value !== (draft.series || '-');
+  $('#seriesRedo').hidden = !changed;
+  if (changed) $('#seriesHint').textContent += ' 內容是照原本的選擇整理的，建議按「依新的選擇重新整理」。';
+};
+$('#seriesRedo').onclick = () => {
+  const v = $('#edSeries').value, s = seriesData.find((x) => x.note === v);
+  $('#reviseText').value = s ? `這篇是「${s.title}」的新紀錄，請依附上的主筆記和之前的紀錄重新整理：前提不要重寫，已經釐清的事不要再問，待辦只列這次新增的。`
+    : '這篇不是持續追蹤筆記的紀錄，請當成一般筆記重新整理：標題、到期、提醒、AGENT 都照一般規則重新判斷。';
+  $('#reviseBtn').click();
+};
 // one input split into several notes: an auto-generated overview + topic drafts
 function fillGroup() {
   const g = draft.group, ov = !!(g && g.role === 'overview' && draft.status !== 'processing');
@@ -197,7 +230,7 @@ function checkTimes() {
 ['#edTitle', '#edTags', '#edBody'].forEach((q) => $(q).addEventListener('input', () => (dirty = true)));
 const edits = () => ({ title: $('#edTitle').value, tags: $('#edTags').value, body: $('#edBody').value,
   expires: $('#edExpMode').value === 'at' ? $('#edExpires').value : null,
-  reminders: rems.filter((r) => r.at), agent: $('#edAgent').checked });
+  reminders: rems.filter((r) => r.at), agent: $('#edAgent').checked, series: $('#seriesBox').hidden ? undefined : $('#edSeries').value });
 function setMode(m) {
   $('#modeEdit').classList.toggle('active', m === 'edit'); $('#modePreview').classList.toggle('active', m === 'preview');
   $('#edBody').hidden = m !== 'edit'; $('#edPreview').hidden = m !== 'preview';
@@ -310,7 +343,7 @@ document.addEventListener('click', async (e) => {
 async function openNote(name) {
   try {
     const md = await api('/api/notes/' + encodeURIComponent(name));
-    reading = name; $('#readBody').innerHTML = renderMd(md); show('read'); refreshAgent(); loadAnswers(); $('#refreshBtn').hidden = name.includes('/') || !/^﻿?---[\s\S]*?\ngenerated_by:\s*claude-note/.test(md);
+    reading = name; $('#readBody').innerHTML = renderMd(md); show('read'); refreshAgent(); loadAnswers(); loadTrack(md); $('#refreshBtn').hidden = name.includes('/') || !/^﻿?---[\s\S]*?\ngenerated_by:\s*claude-note/.test(md) || /^﻿?---[\s\S]*?\nseries_of:/.test(md);
   } catch (err) { toast(err.message); }
 }
 async function refreshAgent() {
@@ -667,3 +700,77 @@ $('#dedupList').addEventListener('click', async (e) => {
   } catch (err) { toast(err.message, 4500); }
   loadDedup(); loadNotes();
 });
+
+// ---------- tracked notes (持續追蹤): main note settings, "接續到" choices ----------
+let seriesData = [];
+async function loadSeries() {
+  try { seriesData = await api('/api/series'); } catch { seriesData = []; }
+  const sel = $('#newSeries'), cur = sel.value;
+  sel.innerHTML = '<option value="">🤖 讓 AI 判斷</option><option value="-">不接續（一般筆記）</option>' +
+    seriesData.map((s) => `<option value="${esc(s.note)}">📌 ${esc(s.name)}（${esc(s.title)}）</option>`).join('');
+  sel.value = [...sel.options].some((o) => o.value === cur) ? cur : '';
+  $('#newSeriesRow').hidden = !seriesData.length;
+  return seriesData;
+}
+const DAY_NAMES = ['', '一', '二', '三', '四', '五', '六', '日'];
+async function loadTrack(md) {
+  const box = $('#trackBox');
+  const isEntry = /^﻿?---[\s\S]*?\nseries_of:/.test(md);
+  box.hidden = !reading || reading.includes('/') || isEntry || document.body.classList.contains('kiosk-mode');
+  if (box.hidden) return;
+  await loadSeries();
+  const s = seriesData.find((x) => x.note === reading);
+  const title = (md.match(/^title:\s*"?(.*?)"?\s*$/m) || [])[1] || reading.replace(/\.md$/i, '');
+  const body = md.replace(/^[\s\S]*?\n---\n/, '');
+  $('#trackState').textContent = s ? `追蹤中・${s.time ? s.daysLabel + ' ' + s.time + ' 前 ' + s.lead + ' 分鐘整理報告' : '不自動整理報告'}` : '未設定';
+  $('#trName').value = s ? s.name : /例會|站會|會議/.test(title) ? '例會進度' : title.replace(/^\d{4}-\d{2}-\d{2}\s+/, '').slice(0, 12) + ' 紀錄';
+  const days = s ? s.days : [1, 2, 3, 4, 5];
+  $('#trDays').innerHTML = DAY_NAMES.slice(1).map((n, i) => `<label><input type="checkbox" value="${i + 1}"${days.includes(i + 1) ? ' checked' : ''}> ${n}</label>`).join('');
+  $('#trTime').value = s ? s.time : ((body.match(/\b(\d{1,2}):(\d{2})\b/) || [])[0] || '').replace(/^(\d):/, '0$1:');
+  $('#trStart').value = s ? s.start : toLocal(new Date()).slice(0, 10);
+  $('#trSave').textContent = s ? '儲存修改' : '設為持續追蹤';
+  $('#trNew').hidden = $('#trOff').hidden = !s;
+  $('#trReport').hidden = !s || !s.time;
+}
+async function saveTrack(on) {
+  const body = on ? { on: true, name: $('#trName').value, days: [...document.querySelectorAll('#trDays input:checked')].map((c) => +c.value), time: $('#trTime').value, start: $('#trStart').value } : { on: false };
+  try {
+    await api('/api/notes/' + encodeURIComponent(reading) + '/series', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    toast(on ? '已設為持續追蹤。之後新增的內容會自動判斷要不要接續到這篇' : '已停止追蹤（已經建立的每日紀錄會保留）', 4500);
+    const md = await api('/api/notes/' + encodeURIComponent(reading));
+    $('#readBody').innerHTML = renderMd(md); await loadTrack(md); $('#trackBox').open = on;
+  } catch (e) { toast('失敗：' + e.message, 4500); }
+}
+$('#trSave').onclick = () => saveTrack(true);
+$('#trOff').onclick = () => { if (confirm('停止追蹤這篇？已經建立的每日紀錄會保留，只是之後不再接續、也不再整理報告。')) saveTrack(false); };
+$('#trNew').onclick = async () => { show('new'); await loadSeries(); $('#newSeries').value = reading; $('#newText').focus(); };
+$('#trReport').onclick = async () => {
+  const b = $('#trReport'); b.disabled = true; toast('整理中，大約半分鐘…', 30000);
+  try { const r = await api('/api/notes/' + encodeURIComponent(reading) + '/series/report', { method: 'POST' }); toast('報告整理好了'); openNote(r.note); }
+  catch (e) { toast('失敗：' + e.message, 5000); }
+  b.disabled = false;
+};
+loadSeries();
+
+// ---------- version (bottom-right) ----------
+let verInfo = null;
+function renderVersion() {
+  const b = $('#verBadge'), v = verInfo;
+  if (!v || !v.version) { b.hidden = true; return; }
+  b.hidden = false;
+  const isNew = v.behind > 0 && v.latest;
+  b.classList.toggle('new', !!isNew);
+  b.textContent = isNew ? `🆕 有新版本 ${v.latest.version}` : `${v.version}${v.date ? ' · ' + v.date.slice(5).replace('-', '/') : ''}`;
+  b.title = isNew ? `目前 ${v.version}，最新 ${v.latest.version}：${v.latest.subject}` : `版本 ${v.version}（${v.sha}）${v.checkedAt ? '，' + fmtTime(v.checkedAt) + ' 檢查過' : ''}`;
+}
+async function loadVersion() { try { verInfo = await api('/api/version'); } catch { verInfo = null; } renderVersion(); }
+$('#verBadge').onclick = async () => {
+  const v = verInfo;
+  if (v && v.behind > 0 && v.latest) return toast(`有新版本 ${v.latest.version}（目前 ${v.version}）：${v.latest.subject}。在電腦上雙擊 ClaudeNote 資料夾裡的 update.cmd 就會更新。`, 9000);
+  if (document.body.classList.contains('kiosk-mode')) return toast(`目前版本 ${v.version}`);
+  toast('檢查新版本中…', 10000);
+  try { verInfo = await api('/api/version/check', { method: 'POST' }); renderVersion(); }
+  catch (e) { return toast('檢查失敗：' + e.message, 4000); }
+  toast(verInfo.error ? verInfo.error : verInfo.behind > 0 ? `有新版本 ${verInfo.latest.version}，在電腦上雙擊 update.cmd 更新` : `${verInfo.version} 已經是最新版本`, 5000);
+};
+loadVersion(); setInterval(loadVersion, 30 * 60 * 1000);
