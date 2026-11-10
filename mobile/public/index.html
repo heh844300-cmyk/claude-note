@@ -128,6 +128,12 @@
         <div class="row gap"><button type="button" id="refreshGo" class="primary">開始更新</button><button type="button" id="refreshCancel">取消</button></div>
       </div>
     </div>
+    <div id="dedupBox" class="box nokiosk" hidden>
+      <div class="row"><span class="lbl">🧹 重複的名詞筆記</span><span id="dedupState" class="hint"></span></div>
+      <p class="hint left">找出「其實是同一個概念」的名詞筆記或灰色連結（例如 PARA方法 和 PARA）。確認後才合併：內容併進保留的那篇，所有連結改連過去（畫面上的字不變），重複的那篇移到 .trash。每週也會自動掃一次。</p>
+      <button type="button" id="dedupScan">立即掃描</button>
+      <ul id="dedupList" class="dlist"></ul>
+    </div>
     <ul id="noteList" class="list"></ul>
     <p id="noteEmpty" class="empty" hidden>還沒有上傳的筆記</p>
   </section>

@@ -18,6 +18,7 @@ const tasks = require('./lib/tasks');
 const answers = require('./lib/answers');
 const { createRelated } = require('./lib/related');
 const refresh = require('./lib/refresh');
+const dedup = require('./lib/dedup');
 
 // ---------- config ----------
 const ROOT = __dirname;
@@ -60,6 +61,7 @@ const CFG = {
   librarianModel: 'haiku',                        // decides where research goes; vault read-only, no web
   librarianTimeoutMs: 10 * 60 * 1000,
   fillAfterMs: 60 * 1000,                         // an empty note made by clicking a gray link is filled after 1 min untouched (0 = off)
+  dedupEveryDays: 7,                              // scan for duplicate research notes / gray links this often (0 = only by button)
   termSplit: true,                                // after upload, move substantive term explanations into 研究/ notes
   vaultExclude: [],                               // vault folders hidden from the web app's vault browser, e.g. ["私人", "日記/2025"]
   bigTextChars: 1500,
@@ -966,6 +968,20 @@ async function runFill(job) {
     log('fill: user started writing, skipped', name);
     return;
   }
+  // the AI says this name is the same concept as an existing research note: don't create a duplicate node,
+  // point every [[name]] at that note instead (the visible text stays) and drop the empty note
+  const same = dedup.pointerTarget('## 摘要\n' + (unit.summary || ''));
+  const sameAbs = same && same.toLowerCase() !== name.toLowerCase() ? library.findCaseless(RESEARCH_DIR, same + '.md') : null;
+  if (sameAbs && !library.isEmptyFile(sameAbs)) {
+    const keep = path.basename(sameAbs, '.md');
+    const n = await redirectLinks(name, keep);
+    if (srcAbs && fs.existsSync(srcAbs) && library.isEmptyFile(srcAbs)) await fsp.unlink(srcAbs).catch(() => {});
+    if (dstExisting && fs.existsSync(dstExisting) && library.isEmptyFile(dstExisting)) await fsp.unlink(dstExisting).catch(() => {});
+    job.status = 'done'; job.result = 'redirected'; job.target = keep; job.finishedAt = new Date().toISOString(); agentStore.save();
+    log('fill: same concept as', keep, '- redirected', n, 'links for', name);
+    await notify('🔗 已改連到：' + keep, `「${name}」和「${keep}」是同一個概念，連結已改連過去，沒有建立新筆記`, '/?note=' + encodeURIComponent(library.RESEARCH_FOLDER + '/' + keep + '.md'));
+    return;
+  }
   const now = new Date();
   const md = library.fillNoteMarkdown({ name, unit, contexts, model: modelLabel(CFG.agentModel), created: localISO(now), stamp: localISO(now).replace('T', ' '),
     research: library.relatedResearch(CFG.vault, RESEARCH_DIR, name) });
@@ -975,6 +991,80 @@ async function runFill(job) {
   job.status = 'done'; job.result = 'filled'; job.finishedAt = new Date().toISOString(); agentStore.save();
   log('fill done', name, '->', path.relative(CFG.vault, dst));
   await notify('🔎 已補好：' + name, '點開就能看這篇筆記', '/?note=' + encodeURIComponent(job.note));
+}
+
+// ---------- duplicate knowledge nodes (PARA方法 vs PARA): proposals the user confirms one by one ----------
+const dedupStore = store('dedup.json', { lastScan: null, items: [] });
+let dedupBusy = false;
+// every [[dupName…]] in the vault -> the kept research note (visible text unchanged). Returns the number of links changed.
+async function redirectLinks(dupName, keepName) {
+  const keepPath = 'Claude-Notes/' + library.RESEARCH_FOLDER + '/' + keepName;
+  let total = 0;
+  for (const abs of library.walkVault(CFG.vault)) {
+    let raw; try { raw = await fsp.readFile(abs, 'utf8'); } catch { continue; }
+    if (!raw.toLowerCase().includes(dupName.toLowerCase())) continue;
+    const k = dedup.readKeep(raw);
+    const r = dedup.rewriteLinks(k.md, dupName, keepPath);
+    if (!r.n) continue;
+    await fsp.writeFile(abs + '.cn-tmp', dedup.writeKeep(r.md, k), 'utf8'); await renameRetry(abs + '.cn-tmp', abs);
+    total += r.n;
+  }
+  return total;
+}
+async function dedupScan(why) {
+  if (dedupBusy) return { busy: true };
+  dedupBusy = true;
+  const st = dedupStore.get();
+  try {
+    const inv = dedup.inventory({ vault, CFG, visibleRels: vault.notes() });
+    const hints = dedup.lexicalPairs(inv);
+    const dismissed = st.items.filter((x) => x.status === 'dismissed');
+    let pairs = null;
+    if (inv.notes.length > 1 || (inv.notes.length && inv.gray.length)) {
+      const out = await ai.plain({ prompt: dedup.prompt(inv, hints, dismissed), model: CFG.bigModel || CFG.agentModel, timeoutMs: CFG.librarianTimeoutMs });
+      await fsp.writeFile(path.join(CFG.dataRoot, 'dedup-last-answer.txt'), String(out)).catch(() => {});
+      pairs = dedup.parsePairs(out, inv);
+      if (!pairs) { log('dedup: unreadable answer, using name matches only:', String(out).slice(0, 200)); pairs = hints.map((h) => ({ ...h, reason: '名稱幾乎相同' })); }
+    }
+    const known = (p) => st.items.some((x) => x.dup.toLowerCase() === p.dup.toLowerCase() && x.keep.toLowerCase() === p.keep.toLowerCase() && x.status !== 'merged');
+    const fresh = (pairs || []).filter((p) => !known(p));
+    for (const p of fresh) st.items.push({ id: crypto.randomBytes(4).toString('hex'), ...p, status: 'pending', foundAt: new Date().toISOString() });
+    st.lastScan = new Date().toISOString();
+    while (st.items.length > 300) st.items.shift();
+    dedupStore.save();
+    log('dedup scan', why, 'found', fresh.length, 'new');
+    if (why === 'weekly' && fresh.length) await notify('🧹 找到 ' + fresh.length + ' 組重複的名詞筆記', '到「已上傳 → 研究」確認要不要合併', '/');
+    return { found: fresh.length };
+  } finally { dedupBusy = false; }
+}
+async function dedupMerge(id) {
+  const st = dedupStore.get();
+  const it = st.items.find((x) => x.id === id && x.status === 'pending');
+  if (!it) throw httpErr(404, '找不到這組（可能已經處理過）');
+  const keepAbs = library.findCaseless(RESEARCH_DIR, it.keep + '.md');
+  if (!keepAbs || library.isEmptyFile(keepAbs)) throw httpErr(409, `要保留的「${it.keep}」已經不存在了`);
+  const stamp = localISO(new Date()).replace('T', ' ');
+  let moved = null;
+  if (it.kind === 'note') {
+    const dupAbs = library.findCaseless(RESEARCH_DIR, it.dup + '.md');
+    if (dupAbs) {
+      const dupRaw = await fsp.readFile(dupAbs, 'utf8');
+      const add = dedup.contentToMerge(dedup.readKeep(dupRaw).md);
+      const k = dedup.readKeep(await fsp.readFile(keepAbs, 'utf8'));
+      let md = dedup.addAlias(k.md, it.dup);
+      if (add) md = md.replace(/\s*$/, '\n') + `\n## 合併自「${it.dup}」\n\n> 🧹 ${stamp} 從重複的筆記「${it.dup}」合併進來。\n\n${add}\n`;
+      await fsp.writeFile(keepAbs + '.cn-tmp', dedup.writeKeep(md, k), 'utf8'); await renameRetry(keepAbs + '.cn-tmp', keepAbs);
+      moved = await moveSafe(dupAbs, TRASH_DIR, `${it.dup} (合併到 ${it.keep} ${stamp.replace(/[-: ]/g, '')}).md`);
+    }
+  } else {
+    const k = dedup.readKeep(await fsp.readFile(keepAbs, 'utf8'));
+    const md = dedup.addAlias(k.md, it.dup);
+    if (md !== k.md) { await fsp.writeFile(keepAbs + '.cn-tmp', dedup.writeKeep(md, k), 'utf8'); await renameRetry(keepAbs + '.cn-tmp', keepAbs); }
+  }
+  const links = await redirectLinks(it.dup, it.keep);
+  it.status = 'merged'; it.mergedAt = new Date().toISOString(); it.links = links; dedupStore.save();
+  log('dedup merged', it.dup, '->', it.keep, 'links', links, moved ? 'moved ' + moved : '');
+  return { links, moved: !!moved };
 }
 
 async function runLibrarian(units, file) {
@@ -1310,6 +1400,24 @@ async function route(req, res) {
         throw e;
       }
     }
+    // duplicate knowledge nodes: list / scan now / merge one / dismiss one
+    if (p[2] === 'dedup') {
+      const st = dedupStore.get();
+      if (!p[3] && M === 'GET') return send(res, 200, { lastScan: st.lastScan, busy: dedupBusy, items: st.items.filter((x) => x.status === 'pending') });
+      if (p[3] === 'scan' && M === 'POST') {
+        if (!agentAvailable()) throw httpErr(400, '還沒有設定 AI，無法掃描');
+        if (dedupBusy) return send(res, 202, { busy: true });
+        dedupScan('manual').catch((e) => log('dedup scan failed:', e.message));
+        return send(res, 202, { started: true });
+      }
+      if (p[3] && p[4] === 'merge' && M === 'POST') return send(res, 200, await dedupMerge(p[3]));
+      if (p[3] && p[4] === 'dismiss' && M === 'POST') {
+        const it = st.items.find((x) => x.id === p[3] && x.status === 'pending');
+        if (!it) throw httpErr(404, '找不到這組');
+        it.status = 'dismissed'; dedupStore.save();
+        return send(res, 200, { ok: true });
+      }
+    }
     return send(res, 404, { error: 'not found' });
   }
 
@@ -1402,6 +1510,12 @@ async function publicRoute(req, res) {
     log(`listening on http://${CFG.host}:${CFG.port}`);
     kickAgent();
     scan(); setInterval(scan, CFG.scanEveryMs);
+    // weekly duplicate scan (results wait for the user's confirmation; a push says when something was found)
+    const weekly = () => {
+      const last = dedupStore.get().lastScan, days = CFG.dedupEveryDays;
+      if (days > 0 && agentAvailable() && (!last || Date.now() - Date.parse(last) >= days * 86400000)) dedupScan('weekly').catch((e) => log('dedup weekly failed:', e.message));
+    };
+    setTimeout(weekly, 5 * 60 * 1000); setInterval(weekly, 3600 * 1000);
   });
   if (CFG.publicPort) http.createServer((req, res) => {
     publicRoute(req, res).catch((e) => {

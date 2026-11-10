@@ -241,7 +241,7 @@ window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault()
 // ---------- notes ----------
 let noteFolder = 'mine';
 document.querySelectorAll('#noteSeg button').forEach((b) => b.addEventListener('click', () => {
-  noteFolder = b.dataset.f; $('#refreshBox').hidden = noteFolder === 'research';
+  noteFolder = b.dataset.f; $('#refreshBox').hidden = noteFolder === 'research'; $('#dedupBox').hidden = noteFolder !== 'research'; if (noteFolder === 'research') loadDedup();
   document.querySelectorAll('#noteSeg button').forEach((x) => x.classList.toggle('active', x === b));
   loadNotes();
 }));
@@ -637,3 +637,33 @@ $('#refreshBtn').onclick = async () => {
   try { const d = await api('/api/notes/' + encodeURIComponent(reading) + '/refresh', { method: 'POST' }); toast('已開始更新，完成後在「草稿」查看', 3500); openDraft(d.id); }
   catch (e) { toast(e.message, 4500); }
 };
+
+// ---------- duplicate knowledge nodes ----------
+let dedupItems = [], dedupTimer = null;
+async function loadDedup() {
+  clearTimeout(dedupTimer);
+  let r; try { r = await api('/api/dedup'); } catch (e) { return; }
+  dedupItems = r.items;
+  $('#dedupState').textContent = r.busy ? '掃描中…' : r.lastScan ? `上次掃描 ${fmtTime(r.lastScan)}` : '還沒掃描過';
+  $('#dedupScan').disabled = r.busy;
+  $('#dedupList').innerHTML = !r.items.length ? (r.lastScan && !r.busy ? '<li class="hint left">沒有找到重複的名詞 👍</li>' : '') : r.items.map((x, i) => `<li>
+    <div>${x.kind === 'gray' ? `灰色連結 <b>[[${esc(x.dup)}]]</b>${x.refs ? `（${x.refs} 處）` : ''} → 改連到 <b>${esc(x.keep)}</b>` : `<b>${esc(x.dup)}</b> → 併入 <b>${esc(x.keep)}</b>`}</div>
+    ${x.reason ? `<div class="hint left">${esc(x.reason)}</div>` : ''}
+    <div class="row gap"><button type="button" class="primary" data-merge="${i}">合併</button><button type="button" data-dismiss="${i}">不是重複</button></div></li>`).join('');
+  if (r.busy) dedupTimer = setTimeout(loadDedup, 4000);
+}
+$('#dedupScan').onclick = async () => {
+  try { await api('/api/dedup/scan', { method: 'POST' }); toast('開始掃描，約需半分鐘'); } catch (e) { return toast(e.message, 4000); }
+  setTimeout(loadDedup, 800);
+};
+$('#dedupList').addEventListener('click', async (e) => {
+  const m = e.target.dataset.merge, d = e.target.dataset.dismiss;
+  if (m == null && d == null) return;
+  const x = dedupItems[+(m != null ? m : d)];
+  e.target.closest('li').querySelectorAll('button').forEach((b) => (b.disabled = true));
+  try {
+    if (m != null) { const r = await api(`/api/dedup/${x.id}/merge`, { method: 'POST' }); toast(`已合併「${x.dup}」到「${x.keep}」，改了 ${r.links} 個連結` + (r.moved ? '；舊筆記移到 .trash' : ''), 4500); }
+    else { await api(`/api/dedup/${x.id}/dismiss`, { method: 'POST' }); toast('好，之後不會再把這組列出來'); }
+  } catch (err) { toast(err.message, 4500); }
+  loadDedup(); loadNotes();
+});

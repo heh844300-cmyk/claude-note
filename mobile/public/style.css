@@ -165,3 +165,7 @@ button.wide { width: 100%; margin-bottom: 10px; }
 #refreshBox button { width: 100%; }
 #refreshBox .row button { width: auto; flex: 1; }
 .warnlist li.info { color: var(--muted); }
+/* duplicate knowledge nodes */
+.dlist { list-style: none; padding: 0; margin: 10px 0 0; }
+.dlist li { border-top: 1px solid var(--line); padding: 10px 0; }
+#dedupScan { width: 100%; }

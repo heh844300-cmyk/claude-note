@@ -1,5 +1,5 @@
 // Service worker: app shell cache + push notifications.
-const CACHE = 'claude-note-v13';
+const CACHE = 'claude-note-v14';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {
