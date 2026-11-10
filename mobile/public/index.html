@@ -72,10 +72,14 @@
   <section id="tab-edit" class="tab" hidden>
     <button class="back" data-back="drafts">← 草稿</button>
     <div id="editStatus" class="status" hidden></div>
+    <div id="groupBox" class="box group" hidden>
+      <div id="groupText" class="hint left"></div>
+      <div class="row gap"><button type="button" id="groupOpenOv" class="small" hidden>看總覽</button><button type="button" id="uploadAllBtn" class="primary">全部上傳</button></div>
+    </div>
     <div id="editImages" class="thumbs"></div>
     <label class="field">標題<input id="edTitle" type="text"></label>
-    <label class="field">標籤（用逗號分隔）<input id="edTags" type="text"></label>
-    <div class="box">
+    <label class="field nogroup-ov">標籤（用逗號分隔）<input id="edTags" type="text"></label>
+    <div class="box nogroup-ov">
       <div class="row">
         <span class="lbl">🗑️ 自動刪除</span>
         <select id="edExpMode"><option value="never">永久保留</option><option value="at">到期後移到垃圾桶</option></select>
@@ -87,20 +91,20 @@
       <p id="timeWarn" class="warn" hidden></p>
       <p id="edModel" class="hint left"></p>
     </div>
-    <div class="seg">
+    <div class="seg nogroup-ov">
       <button id="modeEdit" class="active" type="button">編輯</button>
       <button id="modePreview" type="button">預覽</button>
     </div>
     <textarea id="edBody" rows="18"></textarea>
     <div id="edPreview" class="md" hidden></div>
     <details id="edRaw"><summary>原始內容</summary><pre id="edRawText"></pre></details>
-    <div class="revise">
+    <div class="revise nogroup-ov">
       <textarea id="reviseText" rows="2" placeholder="請 Claude 修改，例如：待辦多列一點、摘要縮短"></textarea>
       <button id="reviseBtn" type="button">請 Claude 修改</button>
     </div>
     <div class="actions">
       <button id="saveBtn" type="button">儲存</button>
-      <button id="uploadBtn" type="button" class="primary">上傳到 Obsidian</button>
+      <button id="uploadBtn" type="button" class="primary nogroup-ov">上傳到 Obsidian</button>
     </div>
     <button id="deleteBtn" type="button" class="danger">刪除草稿</button>
   </section>

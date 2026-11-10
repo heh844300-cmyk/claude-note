@@ -71,8 +71,9 @@ async function loadDrafts() {
   const b = $('#draftCount'); b.hidden = !list.length; b.textContent = list.length;
   if (current === 'drafts') {
     $('#draftEmpty').hidden = list.length > 0;
-    $('#draftList').innerHTML = list.map((d) => `<li data-id="${d.id}">
-      <div class="t">${esc(d.title || d.preview || '（未命名）')}</div>
+    const grp = (d) => !d.group ? '' : d.group.role === 'overview' ? `<span class="pill grp">📑 總覽・${d.group.size} 篇</span>` : `<span class="pill grp">🧩 ${d.group.index}／${d.group.size}</span>`;
+    $('#draftList').innerHTML = list.map((d) => `<li data-id="${d.id}"${d.group && d.group.role === 'topic' ? ' class="in-group"' : ''}>
+      <div class="t">${grp(d)}${esc(d.title || d.preview || '（未命名）')}</div>
       <div class="m"><span class="pill ${d.status}">${STATUS[d.status] || d.status}</span>${esc(d.status === 'processing' ? d.stage : fmtTime(d.createdAt))}
       ${d.images ? ' · 📷' + d.images : ''}${d.audios ? ' · 🎙️' + d.audios : ''}${d.reminders ? ' · ⏰' + d.reminders : ''}${d.expires ? ' · 🗑️' + esc(d.expires.slice(5, 10).replace('-', '/')) : ''}</div></li>`).join('');
   }
@@ -96,7 +97,10 @@ async function refreshEdit() {
   try {
     const d = await api('/api/drafts/' + draft.id);
     const was = draft.status; draft = d;
-    if (was === 'processing' && d.status !== 'processing') { dirty = false; fillEdit(); toast(d.status === 'ready' ? 'Claude 整理好了' : '處理失敗'); }
+    if (was === 'processing' && d.status !== 'processing') {
+      dirty = false; fillEdit();
+      toast(d.status !== 'ready' ? '處理失敗' : d.group && d.group.role === 'overview' ? `內容有 ${d.group.size} 個主題，已拆成 ${d.group.size} 篇草稿` : '整理好了');
+    }
     else updateStatus();
     schedulePoll(d.status === 'processing');
   } catch (e) { schedulePoll(true); }
@@ -107,7 +111,7 @@ function updateStatus() {
   s.className = 'status' + (draft.status === 'error' ? ' error' : '');
   s.innerHTML = busy ? '⏳ ' + esc(draft.stage || '處理中…') + '<br><small>可以先關掉 app，晚點再回來。</small>'
     : draft.status === 'error' ? '⚠️ ' + esc(draft.error) + '<br><button type="button" id="retryBtn">重試</button>' : '';
-  ['#edTitle', '#edTags', '#edBody', '#reviseText', '#reviseBtn', '#saveBtn', '#uploadBtn', '#deleteBtn', '#edExpMode', '#edExpires', '#addRem', '#edAgent'].forEach((q) => ($(q).disabled = busy));
+  ['#edTitle', '#edTags', '#edBody', '#reviseText', '#reviseBtn', '#saveBtn', '#uploadBtn', '#uploadAllBtn', '#deleteBtn', '#edExpMode', '#edExpires', '#addRem', '#edAgent'].forEach((q) => ($(q).disabled = busy));
   if (draft.status === 'error' && !draft.body) ['#reviseBtn', '#uploadBtn'].forEach((q) => ($(q).disabled = true));
   const r = $('#retryBtn'); if (r) r.onclick = retry;
 }
@@ -127,7 +131,35 @@ function fillEdit() {
   $('#edAgent').checked = !!draft.agent;
   $('#edModel').textContent = draft.model ? `整理模型：${draft.model === 'haiku' ? 'Haiku（輕量）' : draft.model === 'sonnet' ? 'Sonnet' : draft.model}` : '';
   setMode('edit'); updateStatus(); checkTimes();
+  fillGroup();
 }
+// one input split into several notes: an auto-generated overview + topic drafts
+function fillGroup() {
+  const g = draft.group, ov = !!(g && g.role === 'overview' && draft.status !== 'processing');
+  document.querySelectorAll('.nogroup-ov').forEach((el) => (el.hidden = ov));
+  $('#groupBox').hidden = !g || draft.status === 'processing';
+  if (g) {
+    $('#groupText').textContent = ov
+      ? `📑 這是總覽：這次輸入拆成 ${g.size} 篇筆記。主題草稿都上傳（或刪除）後，會自動建立這篇總覽，並跟各篇互相連結。總覽只能改標題。`
+      : `🧩 這是同一次輸入拆出的第 ${g.index}／${g.size} 篇，可以單獨修改、上傳，或按「全部上傳」一次上傳整組。`;
+    $('#groupOpenOv').hidden = ov;
+  }
+  if (ov) { $('#edBody').hidden = true; $('#edPreview').hidden = false; $('#edPreview').innerHTML = renderMd(draft.body || ''); }
+  $('#deleteBtn').textContent = ov ? '刪除整組（還沒上傳的主題草稿）' : '刪除草稿';
+}
+$('#groupOpenOv').onclick = () => openDraft(draft.group.overviewId);
+$('#uploadAllBtn').onclick = async () => {
+  const isOv = draft.group && draft.group.role === 'overview';
+  if (!isOv && !checkTimes()) return toast('請先修正到期時間');
+  if (!confirm('把這一組還沒上傳的主題草稿全部上傳到 Obsidian？總覽會在最後自動建立。')) return;
+  const btn = $('#uploadAllBtn'); btn.disabled = true;
+  try {
+    const r = await api('/api/drafts/' + draft.id + '/upload-all', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(isOv ? {} : edits()) });
+    dirty = false; draft = null;
+    toast(`已上傳 ${r.names.length} 篇` + (r.skipped.length ? `；${r.skipped.length} 篇還沒整理好或有錯誤，留在草稿` : '，總覽也已建立'), 4500);
+    show('notes'); loadDrafts();
+  } catch (e) { toast('上傳失敗：' + e.message, 5000); btn.disabled = false; }
+};
 // ---- expiry & reminders ----
 const pad2 = (n) => String(n).padStart(2, '0');
 const toLocal = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;

@@ -151,6 +151,18 @@ function createAI({ CFG, run, log }) {
     return textOf(m);
   }
 
+  // plain text in, text out: no tools of any kind (used to find term explanations to split out)
+  async function plain({ prompt, model, timeoutMs }) {
+    if (CFG.provider === 'claude') {
+      const r = await run(CFG.claude, ['-p', 'Follow the instructions in the input above.', '--model', model, ...claudeBase, '--tools', ''],
+        { input: prompt, cwd: require('os').tmpdir(), timeoutMs });
+      return r.stdout;
+    }
+    if (CFG.provider === 'codex') return codex({ prompt, model, timeoutMs });
+    const m = await chat({ model, messages: [{ role: 'user', content: prompt }] }, timeoutMs);
+    return textOf(m);
+  }
+
   function agentAvailable() {
     if (CFG.provider === 'claude' || CFG.provider === 'codex') return true;
     return !!(CFG.search && CFG.search.apiKey && ['tavily', 'brave'].includes(CFG.search.provider));
@@ -175,7 +187,7 @@ function createAI({ CFG, run, log }) {
     return { chat: /ok/i.test(textOf(m)), tools };
   }
 
-  return { organize, research, librarian, agentAvailable, selfTest };
+  return { organize, research, librarian, plain, agentAvailable, selfTest };
 }
 
 module.exports = { createAI };

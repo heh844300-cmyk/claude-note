@@ -13,6 +13,7 @@ const qr = require('./lib/qr');
 const { createAuth } = require('./lib/auth');
 const library = require('./lib/library');
 const { createVault } = require('./lib/vault');
+const split = require('./lib/split');
 
 // ---------- config ----------
 const ROOT = __dirname;
@@ -55,6 +56,7 @@ const CFG = {
   librarianModel: 'haiku',                        // decides where research goes; vault read-only, no web
   librarianTimeoutMs: 10 * 60 * 1000,
   fillAfterMs: 60 * 1000,                         // an empty note made by clicking a gray link is filled after 1 min untouched (0 = off)
+  termSplit: true,                                // after upload, move substantive term explanations into 研究/ notes
   vaultExclude: [],                               // vault folders hidden from the web app's vault browser, e.g. ["私人", "日記/2025"]
   bigTextChars: 1500,
   lateReminderMs: 6 * 3600 * 1000, // reminders missed while the PC was off: still send if within 6h
@@ -145,7 +147,9 @@ async function listDrafts() {
   const ids = await fsp.readdir(DRAFTS).catch(() => []);
   const out = [];
   for (const id of ids) { if (ID_RE.test(id)) { try { out.push(await loadDraft(id)); } catch {} } }
-  return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  // newest first; a group (same createdAt) stays together: overview, then topics in order
+  const pos = (d) => (d.group ? (d.group.role === 'overview' ? 0 : d.group.index) : 0);
+  return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || pos(a) - pos(b));
 }
 
 // ---------- helpers ----------
@@ -266,12 +270,26 @@ function material(d) {
 }
 const pickModel = (d) => (d.images.length || (d.audioNames || []).length || (d.text || '').length + (d.transcript || '').length > CFG.bigTextChars) ? CFG.bigModel : CFG.smallModel;
 
-async function askClaude(d, payload) {
-  const out = await ai.organize({ prompt: payload, images: d.images.map((f) => path.join(draftDir(d.id), f)), model: d.model,
-    cwd: draftDir(d.id), timeoutMs: CFG.claudeTimeoutMs });
+// src = the draft that owns the photos (a topic's photos live in its overview draft)
+async function askAI(d, payload, src = d) {
+  const out = await ai.organize({ prompt: payload, images: src.images.map((f) => path.join(draftDir(src.id), f)), model: d.model,
+    cwd: draftDir(src.id), timeoutMs: CFG.claudeTimeoutMs });
   if (!out.trim()) throw new Error('AI 沒有回應');
-  return parseNote(out);
+  return out;
 }
+async function askClaude(d, payload, src = d) {
+  // revise must yield one note: if the model still answered with several, keep the first
+  const r = split.parseMulti(await askAI(d, payload, src), parseNote);
+  return r.multi ? r.notes[0] : r.note;
+}
+
+// one input with several unrelated topics -> several notes (organize only, never revise)
+const MULTI_RULES = `
+===== 多主題（只在第一次整理時適用） =====
+如果原文包含兩個以上「彼此不相關」的主題（例如報稅、旅遊規劃、學程式），請拆成多篇筆記，最多 ${split.MAX_TOPICS} 篇；同一個主題底下的子項目、不同面向，不要拆。
+拆的時候：第一行輸出 OVERVIEW: <整體標題，20 字內>，接著每一篇都以單獨一行 === NOTE === 開頭，後面是那一篇完整的標頭（TITLE、TAGS、EXPIRES、REMIND、AGENT）、空行、正文（章節同上）。每篇只放跟它有關的內容、提醒與待辦。
+只有一個主題時，完全照原本格式輸出，不要寫 OVERVIEW，也不要寫 === NOTE ===。
+`;
 function applyClaude(d, r, isRevise) {
   if (r.title) d.title = r.title;
   if (r.tags) d.tags = r.tags;
@@ -306,7 +324,24 @@ async function doOrganize(d) {
   d.model = d.model || pickModel(d);
   d.stage = `${AI_NAME[CFG.provider] || 'AI'}（${modelLabel(d.model)}）整理中…`; await saveDraft(d);
   const instructions = await fsp.readFile(CFG.promptFile, 'utf8');
-  applyClaude(d, await askClaude(d, instructions + HEADER_RULES(d) + material(d)), false);
+  const r = split.parseMulti(await askAI(d, instructions + HEADER_RULES(d) + MULTI_RULES + material(d)), parseNote);
+  if (!r.multi) return applyClaude(d, r.note, false);
+  // several topics: this draft becomes the overview (keeps photos / raw text / transcript); one new draft per topic
+  const topics = [];
+  for (const [i, n] of r.notes.entries()) {
+    const t = { id: d.id.slice(0, 8) + '-' + crypto.randomBytes(5).toString('hex'), createdAt: d.createdAt, status: 'ready', stage: '', error: '',
+      text: '', images: [], audios: [], audioNames: [], transcript: null, title: '', tags: [], body: '', expires: null, reminders: [], agent: false,
+      model: d.model, source: d.source, group: { role: 'topic', overviewId: d.id, index: i + 1, size: r.notes.length } };
+    applyClaude(t, n, false);
+    await fsp.mkdir(draftDir(t.id), { recursive: true });
+    await saveDraft(t);
+    topics.push(t.id);
+  }
+  d.title = r.overviewTitle || r.notes.map((n) => n.title).join('、').slice(0, 40);
+  d.tags = ['總覽'];
+  d.body = ''; d.expires = null; d.reminders = []; d.agent = false;
+  d.group = { role: 'overview', topics, uploaded: {}, size: topics.length };
+  log('organize split into', topics.length, 'topics', d.id);
 }
 
 async function doRevise(d, instruction) {
@@ -316,11 +351,15 @@ async function doRevise(d, instruction) {
   const cur = 'TITLE: ' + d.title + '\nTAGS: ' + d.tags.join(', ') + '\nEXPIRES: ' + (d.expires ? d.expires.replace('T', ' ') : 'never') + '\n' +
     (d.reminders.length ? d.reminders.map((r) => `REMIND: ${r.at.replace('T', ' ')} | ${r.text}`).join('\n') : 'REMIND: none') +
     '\nAGENT: ' + (d.agent ? 'yes' : 'no') + '\n\n' + d.body;
+  // a topic's source material (raw text, transcript, photos) lives in its overview draft
+  let src = d;
+  if (d.group && d.group.role === 'topic') src = await loadDraft(d.group.overviewId).catch(() => d);
+  const topicNote = src !== d ? `\n（原始素材包含好幾個主題；這篇草稿只處理其中「${d.title}」這個主題，其他主題的內容不要放進來。只輸出一篇。）\n` : '';
   const payload = instructions + HEADER_RULES(d) +
     '\n\n===== 修改模式 =====\n下面附上原始素材與「目前的草稿」（使用者可能已經手動修改過，包括到期與提醒）。請以目前草稿為基礎，依照「使用者的修改要求」調整，' +
-    '保留使用者手動修改過的內容。到期、提醒、AGENT 若要求中沒有提到，就照抄目前的值。輸出格式完全同上。\n' +
-    material(d) + '\n===== 目前的草稿 =====\n' + cur + '\n===== 目前的草稿結束 =====\n\n===== 使用者的修改要求 =====\n' + instruction + '\n';
-  applyClaude(d, await askClaude(d, payload), true);
+    '保留使用者手動修改過的內容。到期、提醒、AGENT 若要求中沒有提到，就照抄目前的值。輸出格式完全同上。\n' + topicNote +
+    material(src) + '\n===== 目前的草稿 =====\n' + cur + '\n===== 目前的草稿結束 =====\n\n===== 使用者的修改要求 =====\n' + instruction + '\n';
+  applyClaude(d, await askClaude(d, payload, src), true);
   d.revisions = (d.revisions || []).concat([{ instruction, at: new Date().toISOString() }]);
 }
 
@@ -405,6 +444,7 @@ async function uploadDraft(d) {
   await fsp.mkdir(NOTES_DIR, { recursive: true });
   const now = new Date(); const stamp = localISO(now); const date = stamp.slice(0, 10);
   const safe = (d.title || '').replace(/[\\/:*?"<>|#^[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'note';
+  if (d.group && d.group.role === 'overview' && !d.body) throw httpErr(400, '總覽會在這一組的主題都上傳後自動建立');
   let file = path.join(NOTES_DIR, `${date} ${safe}.md`);
   for (let n = 2; fs.existsSync(file); n++) file = path.join(NOTES_DIR, `${date} ${safe} (${n}).md`);
 
@@ -432,8 +472,51 @@ async function uploadDraft(d) {
   await fsp.rm(draftDir(d.id), { recursive: true, force: true });
   const name = path.basename(file);
   log('uploaded', d.id, '->', file);
+  const isOverview = d.group && d.group.role === 'overview';
+  // move term explanations out (before the Agent job: the queue is serial); never for overviews
+  if (!isOverview && CFG.termSplit) enqueueTerms(name);
   if (d.agent && hasOpenWork(d.body) && agentAvailable()) enqueueAgent(name, 'auto');
+  if (d.group && d.group.role === 'topic') {
+    // record the real file name in the overview draft, then write the overview once nothing is pending
+    await finalizeGroup(d.group.overviewId, { id: d.id, file: name, title: d.title, summary: split.summaryOf(d.body) });
+  }
   return name;
+}
+
+// ---------- multi-topic groups ----------
+const draftExists = (id) => { try { return fs.existsSync(path.join(draftDir(id), 'draft.json')); } catch { return false; } };
+// entries for the overview list, in topic order: uploaded ones with their file, pending ones by current title
+async function groupEntries(ov) {
+  const out = [];
+  for (const id of ov.group.topics) {
+    const up = ov.group.uploaded[id];
+    if (up) { out.push({ id, ...up }); continue; }
+    if (!draftExists(id)) continue; // deleted
+    const t = await loadDraft(id).catch(() => null);
+    if (t) out.push({ id, title: t.title, summary: split.summaryOf(t.body), pending: true });
+  }
+  return out;
+}
+// serialized: records an uploaded topic (if given), then writes the overview once no topic is pending
+let finalizing = Promise.resolve();
+function finalizeGroup(ovId, uploaded = null) {
+  finalizing = finalizing.then(async () => {
+    if (!draftExists(ovId)) { if (uploaded) log('group: overview missing for', uploaded.id); return; }
+    const ov = await loadDraft(ovId);
+    if (!ov.group || ov.group.role !== 'overview') return;
+    if (uploaded) { const { id, ...rest } = uploaded; ov.group.uploaded[id] = rest; await saveDraft(ov); }
+    const entries = await groupEntries(ov);
+    if (entries.some((e) => e.pending)) return; // wait for the rest
+    if (!entries.length) { await fsp.rm(draftDir(ovId), { recursive: true, force: true }); log('group: all topics deleted, overview dropped', ovId); return; }
+    ov.body = split.overviewBody(entries);
+    ov.expires = null; // the overview is an index of the input: kept permanently
+    const name = await uploadDraft(ov);
+    for (const e of entries) {
+      try { split.insertBackLink(path.join(NOTES_DIR, e.file), name, ov.title); } catch (err) { log('group: back-link failed', e.file, err.message); }
+    }
+    log('group: overview written', name, 'with', entries.length, 'topics');
+  }).catch((e) => log('group finalize error', ovId, e.message));
+  return finalizing;
 }
 
 // ---------- push notifications ----------
@@ -547,9 +630,45 @@ SOURCES:
 `;
 
 function agentJobs() { return agentStore.get(); }
+// split term explanations out of a freshly uploaded note (runs in the Agent queue, so before its Agent job)
+function enqueueTerms(note) {
+  const jobs = agentJobs();
+  const job = { id: crypto.randomBytes(5).toString('hex'), kind: 'terms', note, why: 'auto', status: 'queued', error: '', createdAt: new Date().toISOString() };
+  jobs.push(job);
+  while (jobs.length > 200) jobs.shift();
+  agentStore.save();
+  kickAgent();
+  return job;
+}
+async function runTerms(job) {
+  const file = safeNote(job.note);
+  const md0 = (await fsp.readFile(file, 'utf8').catch(() => { throw new Error('筆記已不存在'); })).replace(/^﻿/, '').replace(/\r\n/g, '\n');
+  const { start, end } = split.splittableRegion(md0);
+  const region = md0.slice(start, end);
+  const finish = (n) => { job.status = 'done'; job.counts = { terms: n }; job.finishedAt = new Date().toISOString(); agentStore.save(); };
+  if (region.trim().length < 200) return finish(0); // too short to hold a real explanation
+  const out = await ai.plain({ prompt: split.termsPrompt(region), model: CFG.smallModel, timeoutMs: CFG.librarianTimeoutMs });
+  await fsp.writeFile(path.join(AGENT_CWD, job.id + '.md'), utf8NoBom(out)).catch(() => {});
+  const units = split.validTerms(library.parseResearch('=== MAIN ===\n\n' + out.replace(/\r/g, '')).units, region);
+  if (!units.length) { log('terms: none in', job.note); return finish(0); }
+  // where each term goes: existing note (link / append) or a new research note — same librarian as the Agent
+  const plan = await runLibrarian(units, file);
+  const now = new Date();
+  const results = await library.applyPlan({ vault: CFG.vault, notesDir: NOTES_DIR, origAbs: file, units, plan,
+    model: modelLabel(CFG.smallModel), created: localISO(now), stamp: localISO(now).replace('T', ' '), log });
+  const moved = units.map((u) => ({ u, r: results.get(u.id) })).filter(({ r }) => r && r.action !== 'inline')
+    .map(({ u, r }) => ({ title: u.title, span: u.body, summary: u.summary || u.title, link: library.linkTo(r.rel) }));
+  // re-read right before writing (the note may have been edited); spans that no longer match are left alone
+  const k = split.readKeep(file);
+  const res = split.applyTermReplacements(k.md, moved);
+  if (res.count) split.writeKeep(file, res.md, k);
+  log('terms:', job.note, 'moved', res.count, 'of', units.length);
+  finish(res.count);
+}
+
 function enqueueAgent(note, why) {
   const jobs = agentJobs();
-  const existing = jobs.find((j) => j.note === note && (j.status === 'queued' || j.status === 'running'));
+  const existing = jobs.find((j) => j.note === note && !j.kind && (j.status === 'queued' || j.status === 'running'));
   if (existing) return existing;
   const job = { id: crypto.randomBytes(5).toString('hex'), note, why, status: 'queued', error: '', createdAt: new Date().toISOString() };
   jobs.push(job);
@@ -568,6 +687,7 @@ async function kickAgent() {
   log('agent start', job.note);
   try {
     if (job.kind === 'fill') { await runFill(job); return; }
+    if (job.kind === 'terms') { await runTerms(job); return; }
     const file = safeNote(job.note);
     const md = await fsp.readFile(file, 'utf8').catch(() => { throw new Error('筆記已不存在（可能已到期或被刪除）'); });
     const prompt = AGENT_PROMPT.replace('{{SANDBOX}}', SANDBOX_ON
@@ -588,7 +708,7 @@ async function kickAgent() {
   } catch (e) {
     job.status = 'error'; job.error = e.message.slice(0, 500); job.finishedAt = new Date().toISOString(); agentStore.save();
     log('agent error', job.note, e.message);
-    await notify('⚠️ Agent 失敗：' + job.note.replace(/\.md$/, ''), e.message.slice(0, 100), '/?note=' + encodeURIComponent(job.note));
+    if (job.kind !== 'terms') await notify('⚠️ Agent 失敗：' + job.note.replace(/\.md$/, ''), e.message.slice(0, 100), '/?note=' + encodeURIComponent(job.note));
   } finally {
     agentBusy = false;
     setImmediate(kickAgent);
@@ -749,7 +869,7 @@ async function listNotes(research) {
     if (!st || !st.isFile()) continue;
     const n = prefix + f;
     const fm = parseFrontmatter(await fsp.readFile(path.join(dir, f), 'utf8').catch(() => '')) || {};
-    const job = agentJobs().filter((j) => j.note === n).pop();
+    const job = agentJobs().filter((j) => j.note === n && j.kind !== 'terms').pop();
     items.push({ name: n, mtime: st.mtimeMs, expires: fm.expires || null, reminders: remindersFromFm(fm).length, agent: job ? job.status : null });
   }
   return items.sort((a, b) => b.mtime - a.mtime).slice(0, 100);
@@ -789,7 +909,8 @@ function checkTimes(d) {
 }
 const summary = (d) => ({ id: d.id, createdAt: d.createdAt, updatedAt: d.updatedAt, status: d.status, stage: d.stage, error: d.error,
   title: d.title, preview: (d.title ? '' : (d.text || '').slice(0, 60)), images: d.images.length, audios: (d.audioNames || []).length,
-  expires: d.expires, reminders: (d.reminders || []).length });
+  expires: d.expires, reminders: (d.reminders || []).length,
+  group: d.group ? { role: d.group.role, index: d.group.index || 0, size: d.group.size, overviewId: d.group.overviewId || d.id } : null });
 
 async function route(req, res) {
   const url = new URL(req.url, 'http://local');
@@ -837,7 +958,7 @@ async function route(req, res) {
       return send(res, 202, enqueueFill(name, null, 'manual'));
     }
     if (p[2] === 'agent') {
-      if (M === 'GET') { const n = url.searchParams.get('note'); return send(res, 200, agentJobs().filter((j) => !n || j.note === n).slice(-20)); }
+      if (M === 'GET') { const n = url.searchParams.get('note'); return send(res, 200, agentJobs().filter((j) => j.kind !== 'terms' && (!n || j.note === n)).slice(-20)); }
       if (M === 'POST') {
         const b = await readJson(req);
         if (!fs.existsSync(safeNote(b.note))) return send(res, 404, { error: '找不到筆記' });
@@ -856,10 +977,45 @@ async function route(req, res) {
         return sendFile(res, path.join(draftDir(id), p[5]));
       }
       const d = await loadDraft(id);
-      if (!p[4] && M === 'GET') return send(res, 200, d);
+      const isOverview = !!(d.group && d.group.role === 'overview' && d.status !== 'processing');
+      if (!p[4] && M === 'GET') {
+        if (isOverview) { const entries = await groupEntries(d); d.body = split.overviewBody(entries); d.groupEntries = entries; }
+        return send(res, 200, d);
+      }
       if (d.status === 'processing') return send(res, 409, { error: '草稿處理中，請稍候' });
-      if (!p[4] && M === 'DELETE') { await fsp.rm(draftDir(id), { recursive: true, force: true }); return send(res, 200, { ok: true }); }
-      if (!p[4] && M === 'PUT') { applyEdits(d, await readJson(req)); await saveDraft(d); return send(res, 200, d); }
+      if (!p[4] && M === 'DELETE') {
+        if (isOverview) { // the whole group: pending topics too (already uploaded notes stay in the vault)
+          for (const tid of d.group.topics) if (!d.group.uploaded[tid] && draftExists(tid)) await fsp.rm(draftDir(tid), { recursive: true, force: true });
+        }
+        await fsp.rm(draftDir(id), { recursive: true, force: true });
+        if (d.group && d.group.role === 'topic') await finalizeGroup(d.group.overviewId); // may write or drop the overview now
+        return send(res, 200, { ok: true });
+      }
+      if (!p[4] && M === 'PUT') {
+        const b = await readJson(req);
+        if (isOverview) { if (typeof b.title === 'string' && b.title.trim()) d.title = b.title.trim(); } // only the title is editable
+        else applyEdits(d, b);
+        await saveDraft(d); return send(res, 200, d);
+      }
+      // upload every pending topic of the group (the overview follows automatically)
+      if (p[4] === 'upload-all' && M === 'POST') {
+        const ov = isOverview ? d : (d.group && d.group.role === 'topic' ? await loadDraft(d.group.overviewId).catch(() => null) : null);
+        if (!ov) return send(res, 400, { error: '這份草稿不屬於任何一組' });
+        if (!isOverview) { const b = await readJson(req).catch(() => ({})); applyEdits(d, b); checkTimes(d); await saveDraft(d); }
+        const names = [], skipped = [];
+        for (const tid of ov.group.topics) {
+          if (ov.group.uploaded[tid] || !draftExists(tid)) continue;
+          const t = await loadDraft(tid);
+          if (t.status !== 'ready' || !t.body.trim()) { skipped.push(t.title || tid); continue; }
+          try { checkTimes(t); } catch { skipped.push(t.title); continue; }
+          names.push(await uploadDraft(t));
+        }
+        await finalizing;
+        return send(res, 200, { ok: true, names, skipped });
+      }
+      if (isOverview && (p[4] === 'revise' || p[4] === 'retry' || p[4] === 'upload')) {
+        return send(res, 409, { error: '總覽是自動產生的：請修改各篇主題草稿；主題都上傳後會自動建立總覽' });
+      }
       if (p[4] === 'revise' && M === 'POST') {
         const b = await readJson(req);
         if (!b.instruction || !String(b.instruction).trim()) return send(res, 400, { error: '請輸入修改要求' });
@@ -929,7 +1085,7 @@ const clientIp = (req) => String(req.headers['x-forwarded-for'] || '').split(','
 const KIOSK_WRITES = [
   ['POST', /^\/api\/drafts$/],                                  // new note (text / photos)
   ['PUT', /^\/api\/drafts\/[^/]+$/],                            // edit a draft
-  ['POST', /^\/api\/drafts\/[^/]+\/(revise|retry|upload)$/],    // ask AI to revise, retry, upload to Obsidian
+  ['POST', /^\/api\/drafts\/[^/]+\/(revise|retry|upload|upload-all)$/],    // ask AI to revise, retry, upload (one or a whole group) to Obsidian
   ['POST', /^\/api\/agent$/],                                   // let the Agent research a note
 ];
 function kioskAllowed(method, pathname) {
