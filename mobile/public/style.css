@@ -123,3 +123,11 @@ main.login .actions button.danger { margin: 0; width: auto; }
 .md table { border-collapse: collapse; font-size: 14px; }
 .md th, .md td { border: 1px solid rgba(127,127,127,.3); padding: 4px 8px; text-align: left; vertical-align: top; }
 .md ol { padding-left: 1.4em; }
+
+/* 連線網址 box */
+.urlrow { margin-top: 10px; }
+.urlline { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.urlline code { flex: 1; min-width: 0; overflow-wrap: anywhere; padding: 6px 8px; border-radius: 6px; background: rgba(127,127,127,.12); font-size: 14px; user-select: all; }
+.urlline button { flex: none; }
+.urlrow details { margin-top: 6px; }
+.qr.small-qr { width: 200px; margin: 8px 0 0; }

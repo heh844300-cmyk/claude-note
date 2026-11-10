@@ -347,6 +347,20 @@ async function logout() {
   location.replace('/login.html');
 }
 $('#logoutBtn').onclick = logout;
+
+// copy buttons in the 連線網址 box
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-copy]');
+  if (!b) return;
+  const text = $('#' + b.dataset.copy).textContent;
+  try { await navigator.clipboard.writeText(text); }
+  catch { // older browsers / non-secure context: select the text so it can be copied by hand
+    const r = document.createRange(); r.selectNodeContents($('#' + b.dataset.copy));
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    document.execCommand && document.execCommand('copy');
+  }
+  const old = b.textContent; b.textContent = '已複製 ✓'; setTimeout(() => (b.textContent = old), 1500);
+});
 $('#kioskLogout').onclick = logout;
 
 // public-computer mode: banner, no push / device management, idle logout after 15 min (the server enforces it too)
@@ -354,6 +368,8 @@ function startKiosk(me) {
   const until = new Date(me.expires);
   $('#kioskText').textContent = `🖥️ 公用電腦模式・${String(until.getHours()).padStart(2, '0')}:${String(until.getMinutes()).padStart(2, '0')} 前有效・閒置 15 分鐘自動登出・用完請按登出`;
   $('#kioskBar').hidden = false;
+  document.body.classList.add('kiosk-mode');
+  $('#linksBox').hidden = true;
   document.querySelectorAll('.box.notif, #sessList').forEach((el) => { const b = el.closest('.box') || el; b.hidden = true; });
   // view only (the server refuses any change): hide adding / drafts, open the vault
   document.querySelectorAll('nav button[data-tab="new"], nav button[data-tab="drafts"]').forEach((b) => (b.hidden = true));
@@ -449,6 +465,16 @@ function renderMd(md) {
 
 // ---------- features of this install (recordings, Agent) ----------
 api('/api/features').then((f) => {
+  // 連線網址 (not on a public computer: startKiosk hides the box)
+  if (!document.body.classList.contains('kiosk-mode')) {
+    $('#linksBox').hidden = false;
+    $('#linksNone').hidden = !!(f.mobileUrl || f.publicPcUrl);
+    if (f.mobileUrl) {
+      $('#rowMobile').hidden = false; $('#urlMobile').textContent = f.mobileUrl;
+      $('#qrMobile').src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(f.mobileQr);
+    }
+    if (f.publicPcUrl) { $('#rowPublic').hidden = false; $('#urlPublic').textContent = f.publicPcUrl; }
+  }
   if (!f.audio) { const p = $('#pickAud'); if (p) p.closest('label').hidden = true; }
   if (!f.agent) {
     const c = $('#edAgent'); if (c) { c.checked = false; c.closest('label').hidden = true; }

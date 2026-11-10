@@ -38,6 +38,19 @@
       <button type="submit" class="primary" id="submitBtn">交給 Claude 整理</button>
       <p class="hint">送出後可以關掉 app，整理好的草稿會出現在「草稿」。</p>
     </form>
+    <div class="box" id="linksBox" hidden>
+      <div class="row"><span class="lbl">🔗 連線網址</span></div>
+      <div id="linksNone" class="hint left" hidden>還沒設定手機和公用電腦的連線。重新執行 setup.cmd，在第 6 步「手機和外出使用」選 Y。</div>
+      <div class="urlrow" id="rowMobile" hidden>
+        <div class="hint left">📱 手機（手機要開著 Tailscale）</div>
+        <div class="urlline"><code id="urlMobile"></code><button type="button" class="small" data-copy="urlMobile">複製</button></div>
+        <details><summary>用手機掃描開啟</summary><div class="qr small-qr"><img id="qrMobile" alt="手機網址 QR code"></div></details>
+      </div>
+      <div class="urlrow" id="rowPublic" hidden>
+        <div class="hint left">🖥️ 公用電腦（打開後用手機掃 QR code 核准，只能瀏覽）</div>
+        <div class="urlline"><code id="urlPublic"></code><button type="button" class="small" data-copy="urlPublic">複製</button></div>
+      </div>
+    </div>
     <div class="box notif">
       <div class="row"><span class="lbl">🔔 提醒通知</span><span id="notifState" class="hint"></span></div>
       <div class="row gap"><button type="button" id="notifBtn">開啟通知</button><button type="button" id="notifTest">傳送測試通知</button></div>

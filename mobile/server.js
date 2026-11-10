@@ -793,7 +793,12 @@ async function route(req, res) {
 
   if (p[1] === 'api') {
     if (p[2] === 'health') return send(res, 200, { ok: true });
-    if (p[2] === 'features') return send(res, 200, { audio: !!CFG.audio, agent: agentAvailable(), provider: CFG.provider });
+    if (p[2] === 'features') {
+      // connection addresses for the 「連線網址」 box (phone via Tailscale, public computer via Funnel)
+      const mobileUrl = CFG.publicUrl || '', publicPcUrl = CFG.publicPort && CFG.funnelUrl ? CFG.funnelUrl : '';
+      return send(res, 200, { audio: !!CFG.audio, agent: agentAvailable(), provider: CFG.provider,
+        mobileUrl, publicPcUrl, mobileQr: mobileUrl ? qr.toSvg(mobileUrl) : '' });
+    }
     if (p[2] === 'auth') {
       if (p[3] === 'me' && M === 'GET') {
         const s = req.publicSession;
