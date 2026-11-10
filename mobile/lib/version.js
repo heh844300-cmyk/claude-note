@@ -1,8 +1,12 @@
-// Version of this install (= the git commit it runs) and whether GitHub has a newer one.
-// Version label: "v<number of commits>" — the same on every clone of the repo, and it only goes up.
+// Version of this install and whether GitHub has a newer one.
+// The version number lives in the VERSION file at the repo root, as "<major>.<minor>":
+//   major +1 (minor back to 0) = a new feature or an architecture change  -> shown as "V22"
+//   minor +1                    = an optimisation, a fix or a small feature -> shown as "V22.1"
 // The check runs `git fetch` in the program folder (the same access update.cmd uses) and never asks for a login:
-// without access it just reports "can't check". A new version on GitHub -> one push notification per new commit.
+// without access it just reports "can't check". A higher version on GitHub -> one push notification per version.
 'use strict';
+const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 
 function git(cwd, args, timeoutMs = 60000) {
@@ -18,32 +22,38 @@ function git(cwd, args, timeoutMs = 60000) {
   });
 }
 const parseLog = (s) => { const [sha, date, ...subj] = String(s).split('|'); return { sha, date, subject: subj.join('|') }; };
+// "21.1" -> [21, 1]; anything else -> null
+const parseVer = (s) => { const m = String(s || '').trim().match(/^v?(\d+)(?:\.(\d+))?$/i); return m ? [+m[1], +(m[2] || 0)] : null; };
+const label = (v) => (v ? 'V' + v[0] + (v[1] ? '.' + v[1] : '') : '');
+const newer = (a, b) => !!(a && b) && (a[0] !== b[0] ? a[0] > b[0] : a[1] > b[1]);   // a newer than b
 
 function createVersion({ repoDir, log = () => {}, onNew = async () => {}, notified = { has: () => false, add: () => {} } }) {
-  const state = { version: '', sha: '', date: '', behind: 0, latest: null, checkedAt: null, error: '' };
+  const state = { version: '', sha: '', date: '', newer: false, behind: 0, latest: null, checkedAt: null, error: '' };
+  let cur = null;
 
   async function local() {
-    try {
-      const [count, head] = await Promise.all([git(repoDir, ['rev-list', '--count', 'HEAD']), git(repoDir, ['log', '-1', '--format=%h|%cs|%s', 'HEAD'])]);
-      Object.assign(state, { version: 'v' + count }, parseLog(head));
-      delete state.subject;
-    } catch (e) { state.version = ''; state.error = '這份程式不是用 git 安裝的，無法顯示版本'; }
+    cur = parseVer((() => { try { return fs.readFileSync(path.join(repoDir, 'VERSION'), 'utf8'); } catch { return ''; } })());
+    state.version = label(cur);
+    try { Object.assign(state, parseLog(await git(repoDir, ['log', '-1', '--format=%h|%cs|%s', 'HEAD']))); delete state.subject; }
+    catch { state.sha = ''; if (!cur) state.error = '這份程式不是用 git 安裝的，無法顯示版本'; }
     return state;
   }
 
   async function check() {
-    if (!state.sha) await local();
+    await local();
     if (!state.sha) return state;
     try {
       await git(repoDir, ['fetch', '--quiet', 'origin']);
       const up = await git(repoDir, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).catch(() => 'origin/main');
-      const [behind, count, latest] = await Promise.all([git(repoDir, ['rev-list', '--count', 'HEAD..' + up]), git(repoDir, ['rev-list', '--count', up]),
-        git(repoDir, ['log', '-1', '--format=%h|%cs|%s', up])]);
+      const [behind, latest, rv] = await Promise.all([git(repoDir, ['rev-list', '--count', 'HEAD..' + up]),
+        git(repoDir, ['log', '-1', '--format=%h|%cs|%s', up]), git(repoDir, ['show', up + ':VERSION']).catch(() => '')]);
+      const remote = parseVer(rv);
       state.behind = +behind || 0;
-      state.latest = { version: 'v' + count, ...parseLog(latest) };
+      state.latest = { version: label(remote), ...parseLog(latest) };
+      state.newer = state.behind > 0 && newer(remote, cur);
       state.error = '';
-      if (state.behind > 0 && !notified.has(state.latest.sha)) {
-        notified.add(state.latest.sha);
+      if (state.newer && !notified.has(state.latest.version)) {
+        notified.add(state.latest.version);
         log('new version on GitHub', state.latest.version, state.latest.sha);
         await onNew(state);
       }
@@ -58,4 +68,4 @@ function createVersion({ repoDir, log = () => {}, onNew = async () => {}, notifi
   return { local, check, get: () => state };
 }
 
-module.exports = { createVersion, parseLog };
+module.exports = { createVersion, parseLog, parseVer, label, newer };

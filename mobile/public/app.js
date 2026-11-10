@@ -758,7 +758,7 @@ function renderVersion() {
   const b = $('#verBadge'), v = verInfo;
   if (!v || !v.version) { b.hidden = true; return; }
   b.hidden = false;
-  const isNew = v.behind > 0 && v.latest;
+  const isNew = v.newer && v.latest;
   b.classList.toggle('new', !!isNew);
   b.textContent = isNew ? `🆕 有新版本 ${v.latest.version}` : `${v.version}${v.date ? ' · ' + v.date.slice(5).replace('-', '/') : ''}`;
   b.title = isNew ? `目前 ${v.version}，最新 ${v.latest.version}：${v.latest.subject}` : `版本 ${v.version}（${v.sha}）${v.checkedAt ? '，' + fmtTime(v.checkedAt) + ' 檢查過' : ''}`;
@@ -766,11 +766,11 @@ function renderVersion() {
 async function loadVersion() { try { verInfo = await api('/api/version'); } catch { verInfo = null; } renderVersion(); }
 $('#verBadge').onclick = async () => {
   const v = verInfo;
-  if (v && v.behind > 0 && v.latest) return toast(`有新版本 ${v.latest.version}（目前 ${v.version}）：${v.latest.subject}。在電腦上雙擊 ClaudeNote 資料夾裡的 update.cmd 就會更新。`, 9000);
+  if (v && v.newer && v.latest) return toast(`有新版本 ${v.latest.version}（目前 ${v.version}）：${v.latest.subject}。在電腦上雙擊 ClaudeNote 資料夾裡的 update.cmd 就會更新。`, 9000);
   if (document.body.classList.contains('kiosk-mode')) return toast(`目前版本 ${v.version}`);
   toast('檢查新版本中…', 10000);
   try { verInfo = await api('/api/version/check', { method: 'POST' }); renderVersion(); }
   catch (e) { return toast('檢查失敗：' + e.message, 4000); }
-  toast(verInfo.error ? verInfo.error : verInfo.behind > 0 ? `有新版本 ${verInfo.latest.version}，在電腦上雙擊 update.cmd 更新` : `${verInfo.version} 已經是最新版本`, 5000);
+  toast(verInfo.error ? verInfo.error : verInfo.newer ? `有新版本 ${verInfo.latest.version}，在電腦上雙擊 update.cmd 更新` : `${verInfo.version} 已經是最新版本`, 5000);
 };
 loadVersion(); setInterval(loadVersion, 30 * 60 * 1000);

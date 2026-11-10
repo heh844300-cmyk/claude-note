@@ -1,72 +1,289 @@
-# Claude 筆記
+# Claude 筆記（Claude Note）
 
-把隨手的想法、照片交給 AI 整理成有結構的 Obsidian 筆記，還有一個會上網查資料的 Agent 幫你處理筆記裡的待辦和疑問。
+![Version](https://img.shields.io/badge/version-V21.1-5b4bdb)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4)
+![Node.js](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)
+![Dependencies](https://img.shields.io/badge/npm%20dependencies-0-brightgreen)
+![Obsidian](https://img.shields.io/badge/Obsidian-vault-7c3aed?logo=obsidian&logoColor=white)
+![License](https://img.shields.io/badge/license-%5B請填入%5D-lightgrey)
 
-- 在瀏覽器（或手機）貼上文字、照片 → AI 整理成草稿 → 你修改、或請 AI 重改 → 上傳到 Obsidian
-- 一次輸入好幾個不相關的主題時，**自動拆成多篇**：每個主題一篇完整筆記，另有一篇「總覽」連到各篇
-- 筆記裡的**名詞解釋自動拆成獨立筆記**（放在 研究/，和既有筆記去重），原處留摘要＋連結
-- 草稿可以設定**到期自動刪除**、**提醒推播**
-- **Agent**：上網查資料，回答筆記裡的「待釐清問題」、完成能查的「待辦事項」，並把查到的知識分成獨立的研究筆記
-- **持續追蹤**：把例會、長期專案設為主筆記，之後的進度自動變成「日期 名稱」的每日紀錄並帶入主筆記的前提，不用重打背景；可以在例會前 30 分鐘自動寫好報告草稿並推播
-- **灰色連結自動補**：在 Obsidian 點一個還沒有筆記的 `[[名詞]]`，1 分鐘後 AI 會自動把它寫成完整筆記
-- **瀏覽整個筆記庫**：在網頁上看所有 Obsidian 筆記（唯讀），可以搜尋、點 [[連結]]、看圖片
-- 筆記和設定都只存在你自己的電腦
+> 把隨手的想法、照片交給 AI 整理成有結構的 **Obsidian** 筆記，再由一個會上網查資料的 **Agent** 處理筆記裡的待辦和疑問。筆記、設定、金鑰都只存在你自己的電腦。
 
-## 需要什麼
+---
+
+## 目錄
+
+- [專案簡介](#專案簡介)
+- [核心功能](#核心功能features)
+- [技術堆疊](#技術堆疊)
+- [系統需求](#系統需求)
+- [安裝指南](#安裝指南installation)
+- [使用範例](#使用範例usage)
+- [更新與版本](#更新與版本)
+- [解除安裝](#解除安裝)
+- [目錄結構](#目錄結構)
+- [隱私與費用](#隱私與費用)
+- [貢獻指南](#貢獻指南contributing)
+- [授權條款](#授權條款license)
+
+---
+
+## 專案簡介
+
+Claude 筆記是一個跑在你自己 Windows 電腦上的小型伺服器（`mobile/server.js`，Node.js，零 npm 依賴），提供一個可以加到手機主畫面的網頁 App（PWA）：
+
+```
+輸入（文字／照片／分享）→ AI 整理成草稿 → 你修改或請 AI 重改 → 上傳到 Obsidian
+                                                             └→ Agent 上網查資料、回答疑問、補研究筆記
+```
+
+AI 可以選 **Claude 訂閱**、**ChatGPT 訂閱（Codex CLI）**，或任何 **OpenAI 相容 API**（含 Gemini 免費金鑰、Ollama 本機模型）。
+架構、資料流與安全設計請看 **[docs/技術說明.md](docs/技術說明.md)**。
+
+---
+
+## 核心功能（Features）
+
+### ✍️ 整理
+
+| 功能 | 說明 |
+|---|---|
+| **AI 整理草稿** | 文字、照片（白板、手寫、截圖），或從手機「分享」進來的內容，整理成摘要、重點、思路脈絡、待辦、待釐清問題 |
+| **參考既有筆記** | 整理和查資料前，先從筆記庫找出相關的筆記當前提，不會重複問已經寫過的事 |
+| **一次多主題自動拆篇** | 不相關的主題拆成多篇（最多 6 篇），另外建一篇「總覽」互相連結 |
+| **名詞解釋拆成獨立筆記** | 解釋名詞的段落移到 `研究/`，原處留「摘要（詳見 → [[連結]]）」，和既有筆記去重 |
+| **到期與提醒** | 短期記事到期後移到 `.trash`；提醒用 Web Push 推播到手機和電腦 |
+
+### 🔎 Agent 研究
+
+| 功能 | 說明 |
+|---|---|
+| **回答待釐清問題、完成待辦** | 網路搜尋一手來源；完成的待辦自動打勾，查到的知識分成研究筆記 |
+| **回答後重查** | 在 App 裡回答「待釐清問題」，Agent 會帶著你的回答重新整理；已釐清的移到「已釐清」章節 |
+| **灰色連結自動補** | 在 Obsidian 點一個還沒有筆記的 `[[名詞]]`，空白 1 分鐘後 AI 自動寫成完整筆記 |
+| **沙盒（選配）** | 需要安裝、測試軟體的待辦，在隔離的 WSL 發行版裡執行，碰不到你的電腦 |
+
+### 🗂️ 管理
+
+| 功能 | 說明 |
+|---|---|
+| **待辦統一管理** | 「待辦」分頁列出整個筆記庫的 `- [ ]`，有 `📅` 到期日的排前面，打勾直接改原筆記 |
+| **持續追蹤** | 例會、長期專案設為主筆記；之後的進度自動變成「日期 名稱」每日紀錄並帶入前提；可在例會前 30 分鐘自動整理報告草稿並推播 |
+| **用最新規則更新** | 整理規則改版後，一鍵把舊筆記重新整理成草稿，確認後才覆蓋（舊版先備份到 `.trash`） |
+| **清除重複名詞** | 找出「其實是同一個概念」的研究筆記或灰色連結（例如 `PARA方法` 和 `PARA`），逐組確認後合併；每週自動掃一次 |
+| **瀏覽整個筆記庫** | 網頁上唯讀瀏覽、搜尋所有 Obsidian 筆記，可點 `[[連結]]`、看圖片 |
+
+### 📱 連線
+
+| 功能 | 說明 |
+|---|---|
+| **手機** | 透過 Tailscale（免費）連回家裡的電腦，安裝精靈會顯示 QR code |
+| **公用電腦登入（選配）** | 沒裝 Tailscale 的電腦打開公開網址，用手機掃 QR code 核准後可瀏覽、新增筆記 |
+| **版本與更新通知** | 右下角顯示版本號；GitHub 有新版本時推播通知 |
+
+---
+
+## 技術堆疊
+
+| 類別 | 使用的技術 |
+|---|---|
+| 伺服器 | Node.js 20+（只用內建模組，沒有 `package.json`、不需要 `npm install`） |
+| 前端 | 原生 HTML／CSS／JavaScript、PWA（Service Worker、Web App Manifest、Share Target） |
+| AI | [Claude Code](https://claude.com/claude-code) CLI、[OpenAI Codex CLI](https://github.com/openai/codex)，或 OpenAI 相容 Chat Completions API |
+| Agent 搜尋 | Claude／Codex 內建搜尋；API 模式用 [Tavily](https://tavily.com) 或 [Brave Search API](https://brave.com/search/api/) |
+| 推播 | Web Push（VAPID，RFC 8291／8292，自行實作） |
+| 筆記 | [Obsidian](https://obsidian.md) 筆記庫（Markdown + YAML frontmatter）、選用 Tasks 外掛 |
+| 連線 | [Tailscale](https://tailscale.com) Serve（手機）／Funnel（公用電腦入口） |
+| 沙盒 | WSL 2（Ubuntu 24.04 發行版）+ MCP 工具 `sandbox_run` |
+| 錄音（進階） | ffmpeg + [whisper.cpp](https://github.com/ggerganov/whisper.cpp) |
+| 安裝 | PowerShell 安裝精靈（`setup.cmd`）、`winget` |
+
+---
+
+## 系統需求
 
 - 一台**常開**的 Windows 10／11 電腦，裝好 [Obsidian](https://obsidian.md)
+- [Git](https://git-scm.com)（下載與更新用）；Node.js 20 以上（沒有的話安裝精靈會用 `winget` 安裝）
 - 一種 AI（安裝時選）：
-  - **Claude 訂閱**（Pro／Max）：用 Claude Code 登入，不用另外付費
-  - **ChatGPT 訂閱**：用 OpenAI 的 Codex CLI 登入 ChatGPT 帳號，用的是方案內含的 Codex 額度，不用另外付費（安裝精靈會幫你裝 Codex CLI）
-  - **API 金鑰，用多少付多少**：OpenAI、Google Gemini、OpenRouter、DeepSeek 等任何「OpenAI 相容」服務
-    - 只有 Google 帳號、沒有其他 AI 訂閱？可以用 **Gemini 免費金鑰**，全程不用付錢：看 [docs/用Gemini金鑰安裝.md](docs/用Gemini金鑰安裝.md)
-  - **Ollama 本機模型**：完全免費，在自己電腦上跑（需要夠力的電腦）
-- 用 API 金鑰或 Ollama、又想用 Agent 查資料的話：一個搜尋服務金鑰（[Tavily](https://tavily.com) 或 [Brave Search API](https://brave.com/search/api/)。是否有免費額度、價格多少，請看各家官網）。Claude 和 ChatGPT 訂閱都內建搜尋，不需要
-- 訂閱方案都有使用上限，Agent 用得多時可能暫時用完，要等額度恢復；每個人都要用**自己的**帳號，不能共用
 
-## 安裝
+| 選項 | 費用 | 備註 |
+|---|---|---|
+| **Claude 訂閱**（Pro／Max） | 訂閱內含 | 用 Claude Code 登入 |
+| **ChatGPT 訂閱** | 訂閱內含（Codex 額度） | 安裝精靈會幫你裝 Codex CLI |
+| **OpenAI 相容 API 金鑰** | 用多少付多少 | OpenAI、Google Gemini、OpenRouter、DeepSeek 等 |
+| **Gemini 免費金鑰** | 免費 | 只有 Google 帳號時的選擇，看 [docs/用Gemini金鑰安裝.md](docs/用Gemini金鑰安裝.md) |
+| **Ollama 本機模型** | 免費 | 需要夠力的電腦 |
 
-0. 先接受邀請：這是私人專案，請到你的 email 或 GitHub 通知裡，按下專案擁有者寄給你的邀請連結並接受
-1. 安裝 Git：在 PowerShell 執行 `winget install --id Git.Git -e`（或到 https://git-scm.com 下載），裝好後關掉再重開 PowerShell
-2. 下載這個專案（第一次會跳出 GitHub 登入視窗，用受邀的 GitHub 帳號登入）：
-   ```
-   cd $HOME
-   git clone https://github.com/heh844300-cmyk/claude-note.git ClaudeNote
-   ```
-3. 打開 `ClaudeNote` 資料夾，**雙擊 `setup.cmd`**，照中文提示一步步完成
-4. 瀏覽器打開 http://127.0.0.1:8787 開始使用（`127.0.0.1` 是這台電腦自己，連線不會離開電腦，所以用 http 就安全；從手機或公用電腦連進來時一律是 https）
+- 用 API 金鑰或 Ollama、又想用 Agent 查資料：還需要 Tavily 或 Brave Search 的金鑰（免費額度與價格以各家官網為準）
+- 訂閱方案都有使用上限；每個人都要用**自己的**帳號，不能共用
 
-## 更新
+### 不同 AI 的功能差異
 
-雙擊 `update.cmd`。要改 AI、金鑰、筆記庫等設定，重新執行 `setup.cmd`。
+| | Claude 訂閱 | ChatGPT 訂閱（Codex） | API 金鑰／Ollama |
+|---|:---:|:---:|:---:|
+| 整理筆記、照片 | ✔ | ✔ | ✔（模型要能看圖片） |
+| Agent 查資料、灰色連結自動補 | ✔ 內建搜尋 | ✔ 內建搜尋 | ✔ 需要搜尋金鑰＋支援工具呼叫的模型 |
+| 錄音轉文字 | 進階，需自行安裝 | — | — |
+| Agent 沙盒 | ✔（選填） | ✔（選填） | — |
 
-網頁右下角會顯示目前的版本（例如 `v21 · 11/10`）。程式每 6 小時會到 GitHub 檢查一次，有新版本時右下角會變成「🆕 有新版本」，同時推播通知一次（要先在「新增」頁開啟通知）。點右下角的版本號可以立刻檢查。
+---
+
+## 安裝指南（Installation）
+
+> 這是**私人**專案。請先到 email 或 GitHub 通知裡，接受專案擁有者寄給你的邀請。
+
+**1. 安裝 Git**（裝好後關掉再重開 PowerShell）
+
+```powershell
+winget install --id Git.Git -e
+```
+
+**2. 下載專案**（第一次會跳出 GitHub 登入視窗，用受邀的帳號登入）
+
+```powershell
+cd $HOME
+git clone https://github.com/heh844300-cmyk/claude-note.git ClaudeNote
+```
+
+**3. 執行安裝精靈**：打開 `ClaudeNote` 資料夾，**雙擊 `setup.cmd`**，照中文提示完成。精靈會：
+
+- 檢查／安裝 Node.js，選擇 AI 並測試連線
+- 選擇 Obsidian 筆記庫，寫入 `mobile/config.json`
+- 設定開機自動啟動
+- （選填）第 6 步設定手機與公用電腦連線、第 7 步建立 Agent 沙盒
+
+**4. 開始使用**：瀏覽器打開 <http://127.0.0.1:8787>
+
+> `127.0.0.1` 是這台電腦自己，連線不會離開電腦，所以用 http 就安全；從手機或公用電腦連進來時一律是 https。
+
+手機的手動設定與細節：[docs/手機設定.md](docs/手機設定.md)
+
+---
+
+## 使用範例（Usage）
+
+### 網頁／手機 App
+
+| 分頁 | 做什麼 |
+|---|---|
+| **新增** | 輸入文字、附照片，按「交給 Claude 整理」；有持續追蹤的筆記時可以選「📌 接續到」 |
+| **草稿** | 檢查 AI 整理的結果、手動修改或「請 Claude 修改」，設定到期／提醒／Agent，再「上傳到 Obsidian」 |
+| **已上傳** | 看筆記、讓 Agent 查資料、回答待釐清問題、設定持續追蹤、用最新規則更新；「🔎 研究」裡可以清除重複名詞 |
+| **待辦** | 整個筆記庫的待辦，打勾即完成 |
+| **筆記庫** | 唯讀瀏覽與搜尋整個 Obsidian 筆記庫 |
+
+**例：每天記例會進度**
+
+1. 打開例會的主筆記 →「📌 持續追蹤」→ 填名稱（例如 `例會進度`）、例會日子與時間 →「設為持續追蹤」
+2. 之後在「新增」只要打：`今天把資料庫加上索引，明天研究辨識準確率`
+3. 上傳後會存成 `2026-11-17 例會進度.md`，開頭連回主筆記；例會前 30 分鐘手機會收到報告草稿
+
+### 電腦版：整理剪貼簿（只支援 Claude Code）
+
+```powershell
+# 雙擊 claude-note.bat：整理剪貼簿裡的文字（也可以把 .txt／.md 拖到它上面）
+.\claude-note.ps1                      # 使用剪貼簿文字
+.\claude-note.ps1 C:\path\note.txt     # 使用文字／Markdown 檔
+.\claude-note.ps1 -Text "some idea"    # 直接給一段文字
+```
+
+---
+
+## 更新與版本
+
+雙擊 **`update.cmd`**（執行 `git pull --ff-only` 後重新啟動伺服器）。要改 AI、金鑰、筆記庫等設定，重新執行 `setup.cmd`。
+
+- 網頁右下角顯示目前版本，例如 `V21.1 · 11/10`
+- 伺服器每 6 小時檢查一次 GitHub；有新版本時右下角變成「🆕 有新版本」並**推播一次**（要先在「新增」頁開啟通知）
+- 點右下角的版本號可以立刻檢查
+
+版本號寫在根目錄的 [`VERSION`](VERSION)（格式 `大版本.小版本`）：
+
+| 變動 | 升版方式 | 顯示 |
+|---|---|---|
+| 新增功能、更改架構 | 大版本 +1，小版本歸 0 | `V22` |
+| 優化、修正、小功能 | 小版本 +1 | `V22.1` |
+
+---
 
 ## 解除安裝
 
-雙擊 `uninstall.cmd`，照中文提示操作：停止伺服器、刪除開機自動啟動、關掉這套程式開的 Tailscale 入口（不會動到你其他的 Tailscale 設定），最後在視窗關閉後自動刪除整個程式資料夾（包含設定、金鑰、草稿）。
+雙擊 **`uninstall.cmd`**，照中文提示操作：停止伺服器、刪除開機自動啟動、關掉這套程式開的 Tailscale 入口（不動你其他的 Tailscale 設定），最後刪除整個程式資料夾（包含設定、金鑰、草稿）。
 
-- **你的筆記一律保留**：Obsidian 筆記庫裡的 Claude-Notes、研究筆記都不會被刪
-- 還沒上傳的草稿會提醒你，刪除後就找不回來
-- 安裝精靈幫你裝的 Node.js、Tailscale、Codex CLI 等軟體不會自動移除，最後會列出移除指令
+- ✅ **你的筆記一律保留**：Obsidian 筆記庫裡的 `Claude-Notes`、研究筆記都不會被刪
+- ⚠️ 還沒上傳的草稿會提醒你，刪除後就找不回來
+- 安裝精靈裝的 Node.js、Tailscale、Codex CLI 等軟體不會自動移除，最後會列出移除指令
 
-## 手機
+---
 
-選配。需要 Tailscale（免費）讓手機安全地連回家裡的電腦。安裝精靈第 6 步「手機和外出使用」會幫你安裝、設定，最後在畫面上顯示 QR code 讓手機一掃就打開；也可以開啟「公用電腦登入」，在外面沒裝 Tailscale 的電腦上用手機掃碼核准後瀏覽、新增筆記。手動設定與細節請看 [docs/手機設定.md](docs/手機設定.md)。
+## 目錄結構
+
+```text
+ClaudeNote/
+├── setup.cmd / update.cmd / uninstall.cmd   # 安裝精靈、更新、解除安裝（雙擊執行）
+├── VERSION                                  # 版本號（大版本.小版本）
+├── prompt.md                                # AI 整理筆記的規則（可以自己改）
+├── claude-note.bat / claude-note.ps1        # 電腦版：整理剪貼簿文字
+├── setup/
+│   ├── setup.ps1 / uninstall.ps1            # 安裝／解除安裝精靈本體
+│   ├── sandbox-setup.js                     # 建立 Agent 沙盒
+│   └── qr-term.js                           # 在終端機顯示 QR code
+├── sandbox/                                 # 沙盒的初始化、防火牆、隔離測試腳本
+├── syncthing/                               # 選配：筆記庫同步到手機
+├── docs/
+│   ├── 技術說明.md                           # 技術架構
+│   ├── 手機設定.md
+│   └── 用Gemini金鑰安裝.md
+└── mobile/
+    ├── server.js                            # HTTP 伺服器、工作佇列、排程（只聽 127.0.0.1）
+    ├── run-server.cmd / start-hidden.vbs / stop-server.cmd
+    ├── lib/                                 # 各功能模組（見 docs/技術說明.md）
+    ├── public/                              # 網頁 App（PWA）
+    ├── test/                                # 測試（node test/<name>.test.js）
+    ├── config.json                          # 這台電腦的設定（不進版控）
+    ├── data/                                # 草稿、推播金鑰、工作紀錄（不進版控）
+    └── logs/server.log                      # 伺服器紀錄（不進版控）
+```
+
+---
 
 ## 隱私與費用
 
 - 你的筆記、草稿、金鑰都只存在你的電腦（`mobile\config.json`、`mobile\data\`），不會上傳到 GitHub
-- 整理筆記、Agent 查資料時，相關內容會送到你選的 AI 服務；用 API 金鑰的話依該服務計費。Agent 每次查詢都會用到額度，可以在草稿裡取消勾選「讓 Agent 查資料」
-- Agent 只能上網搜尋和讀公開網頁，讀不到你電腦上的檔案；它也無法連到你的電腦或內部網路
+- 整理筆記、Agent 查資料時，相關內容會送到你選的 AI 服務；用 API 金鑰的話依該服務計費。Gemini 免費方案的內容可能被 Google 用於改善產品，詳見 [docs/用Gemini金鑰安裝.md](docs/用Gemini金鑰安裝.md)
+- Agent 每次查詢都會用到額度，可以在草稿裡取消勾選「讓 Agent 查資料」
+- Agent 只能上網搜尋和讀公開網頁，讀不到你電腦上的檔案，也連不到你的電腦或內部網路
 
-## 功能差異
+---
 
-| | Claude 訂閱 | ChatGPT 訂閱（Codex） | API 金鑰／Ollama |
-|---|---|---|---|
-| 整理筆記、照片 | ✔ | ✔ | ✔（模型要能看圖片） |
-| Agent 查資料、灰色連結自動補 | ✔ 內建搜尋 | ✔ 內建搜尋 | ✔ 需要搜尋服務金鑰＋支援工具呼叫的模型 |
-| 錄音轉文字 | 進階，需自行安裝 | — | — |
-| Agent 沙盒（裝程式測試） | ✔ 安裝精靈第 7 步（選填） | ✔ 安裝精靈第 7 步（選填） | — |
+## 貢獻指南（Contributing）
 
-技術細節：[docs/技術說明.md](docs/技術說明.md)
+> [請填入：是否接受外部貢獻、聯絡方式、Issue／PR 流程]
+
+目前專案實際採用的規則：
+
+1. **不加 npm 依賴**：伺服器只用 Node.js 內建模組
+2. **改完先跑測試**：
+
+   ```powershell
+   cd mobile
+   Get-ChildItem test\*.test.js | ForEach-Object { node $_.FullName }
+   ```
+
+   每行 `ok` 代表通過，出現 `FAIL` 就是失敗。
+
+3. **用筆記庫副本測整個伺服器**：寫一份測試用設定（`vault` 指向副本，換掉 `dataRoot`、`port`），然後：
+
+   ```powershell
+   $env:CN_CONFIG = "C:\path\test-config.json"
+   node mobile\server.js
+   ```
+
+4. **每次推上 GitHub 都要升 [`VERSION`](VERSION)**（規則見[更新與版本](#更新與版本)），否則其他人不會收到更新通知
+5. 介面文字、提示與文件使用繁體中文（台灣用語）
+
+---
+
+## 授權條款（License）
+
+[請填入授權條款，例如 MIT；目前倉庫沒有 LICENSE 檔]
