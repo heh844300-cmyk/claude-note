@@ -319,7 +319,7 @@ async function refreshAgent() {
   let jobs = []; try { jobs = await api('/api/agent?note=' + encodeURIComponent(reading)); } catch {}
   const j = jobs[jobs.length - 1];
   const busy = j && (j.status === 'queued' || j.status === 'running');
-  $('#agentState').textContent = !j ? '尚未執行' : j.status === 'done' ? `已完成 ${fmtTime(j.finishedAt)}${j.counts && j.counts.new ? `，新增 ${j.counts.new} 篇` : ''}${j.counts && j.counts.append ? `，補充 ${j.counts.append} 篇` : ''}${j.ticked ? `，完成 ${j.ticked} 項待辦` : ''}`
+  $('#agentState').textContent = !j ? '尚未執行' : j.status === 'done' ? `已完成 ${fmtTime(j.finishedAt)}${j.counts && j.counts.new ? `，新增 ${j.counts.new} 篇` : ''}${j.counts && j.counts.append ? `，補充 ${j.counts.append} 篇` : ''}${j.ticked ? `，完成 ${j.ticked} 項待辦` : ''}${j.counts && j.counts.resolved ? `，釐清 ${j.counts.resolved} 題` : ''}`
     : j.status === 'error' ? '失敗：' + j.error : j.status === 'running' ? '查資料中…（可能要幾分鐘）' : '排隊中…';
   $('#agentBtn').disabled = !!busy;
   $('#agentBtn').textContent = j ? '重新讓 Agent 查資料' : '讓 Agent 查資料';

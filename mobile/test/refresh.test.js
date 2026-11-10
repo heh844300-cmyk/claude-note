@@ -39,3 +39,7 @@ assert(units.length === 0, 'already-split line is never split again');
 const md1 = '# t\n\n## 重點\nX 是一種東西，用來做事。\n\n<details><summary>拆出前的原文（名詞解釋）</summary>\n\n**Y**\n\nY 是舊的。\n\n</details>\n';
 const a = S.applyTermReplacements(md1, [{ title: 'X', span: 'X 是一種東西，用來做事。', summary: 'X 摘要。', link: '[[X]]' }]);
 assert(a.md.split('拆出前的原文').length === 2 && a.md.includes('Y 是舊的。\n\n---\n\n**X**\n\nX 是一種東西'), 'second split adds to the same 拆出前的原文 block');
+const withDone = '\n## 摘要\nx\n\n## 已釐清\n- ✅ 問題一\n  - 💬 我的回答：答\n  - 結論：好\n\n## 相關概念\n- [[A]]\n';
+const pd = R.preserve(withDone, '## 摘要\ny\n\n## 相關概念\n- [[A]]\n');
+assert(pd.body.includes('## 已釐清\n- ✅ 問題一\n  - 💬 我的回答：答\n  - 結論：好\n\n## 相關概念'), '已釐清 section dropped by the AI is put back');
+assert(S.splittableRegion('# t\n\n## 重點\nA\n\n## 已釐清\n- ✅ q\n').end < '# t\n\n## 重點\nA\n\n## 已釐清'.length, '已釐清 is never term-split');

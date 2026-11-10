@@ -14,18 +14,22 @@ const RESEARCH_FOLDER = '研究';
 function parseResearch(output) {
   const text = String(output || '').replace(/\r/g, '').trim()
     .replace(/^\s*```(?:markdown|md)?\s*\n/, '').replace(/\n```\s*$/, '');
-  const lines = text.split('\n');
-  const done = []; let i = 0;
-  for (; i < lines.length; i++) {
-    const m = lines[i].match(/^\s*DONE:\s*(.+)$/);
-    if (m) done.push(m[1].trim()); else if (lines[i].trim()) break;
-  }
+  // DONE: / RESOLVED: lines belong at the top, but models sometimes put them at the end: take them from anywhere
+  const done = [], resolved = [];
+  const lines = text.split('\n').filter((l) => {
+    const m = l.match(/^\s*DONE:\s*(.+)$/);
+    const r = l.match(/^\s*RESOLVED:\s*(.+?)\s*[|｜]\s*(.*)$/);   // "RESOLVED: <question> | <one-line conclusion>"
+    if (m) { done.push(m[1].trim()); return false; }
+    if (r) { resolved.push({ question: r[1].trim(), conclusion: r[2].trim() }); return false; }
+    return true;
+  });
+  let i = 0; while (i < lines.length && !lines[i].trim()) i++;
   const rest = lines.slice(i).join('\n');
   const parts = rest.split(/^=== *(MAIN|UNIT +(U\d+)) *===[ \t]*$/m);
   // parts: [before, tag, unitId|undefined, body, tag, unitId, body, ...]
   let main = '';
   const units = [];
-  if (parts.length === 1) return { done, main: rest.trim(), units };
+  if (parts.length === 1) return { done, resolved, main: rest.trim(), units };
   main = parts[0].trim();
   for (let k = 1; k < parts.length; k += 3) {
     const tag = parts[k], id = parts[k + 1], body = (parts[k + 2] || '').trim();
@@ -47,7 +51,7 @@ function parseResearch(output) {
     if (!u.title) u.title = u.summary.slice(0, 30) || id;
     if (u.body || u.summary) units.push(u);
   }
-  return { done, main, units };
+  return { done, resolved, main, units };
 }
 
 // ---------- librarian ----------
@@ -322,7 +326,7 @@ function renderMain(main, units, results) {
     const arrow = r.action === 'link' ? '已有筆記涵蓋' : r.action === 'append' ? '已補充到' : '詳見研究筆記';
     return `${u.summary || u.title}（${arrow} → ${linkTo(r.rel)}）`;
   };
-  let out = String(main || '').replace(/^\s*DONE\b.*$\n?/gm, '').replace(/\{\{\s*(U\d+)\s*\}\}/g, (_, id) => render(id));
+  let out = String(main || '').replace(/^\s*(DONE|RESOLVED)\b.*$\n?/gm, '').replace(/\{\{\s*(U\d+)\s*\}\}/g, (_, id) => render(id));
   const left = units.filter((u) => !used.has(u.id));
   if (left.length) out += '\n\n### 其他整理\n' + left.map((u) => `**${u.title}**\n${render(u.id)}`).join('\n\n');
   const grp = { new: [], append: [], link: [] };

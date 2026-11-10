@@ -81,4 +81,41 @@ function answerLinks(md, max = 3) {
   return names.slice(0, max);
 }
 
-module.exports = { MARK, listItems, applyAnswers, answerLinks };
+// move settled questions from "## 待釐清問題" to "## 已釐清" (right after it): the question, its 💬 answer and a one-line
+// conclusion. resolved: [{ question, conclusion }] (question matched without spaces / punctuation). LF text, no BOM.
+// Returns { md, moved }. An emptied 待釐清問題 section is removed.
+function resolveQuestions(md, resolved) {
+  const lines = md.split('\n');
+  const q = section(lines, '待釐清問題');
+  if (!q || !resolved.length) return { md, moved: 0 };
+  const want = new Map(resolved.filter((r) => norm(r.question)).map((r) => [norm(r.question), r.conclusion]));
+  const keep = [], out = [];
+  for (let i = q[0]; i < q[1]; i++) {
+    const m = lines[i].match(ITEM_RE);
+    let j = i + 1; while (j < q[1] && /^\s+\S/.test(lines[j])) j++;      // the item and its indented sub-lines
+    const item = lines.slice(i, j);
+    if (m && want.has(norm(m[2]))) {
+      const c = want.get(norm(m[2]));
+      out.push(`- ✅ ${m[2].trim()}`, ...item.slice(1), ...(c ? [`  - 結論：${c}`] : []));
+      want.delete(norm(m[2]));
+    } else keep.push(...item);
+    i = j - 1;
+  }
+  if (!out.length) return { md, moved: 0 };
+  const restLeft = keep.some((l) => ITEM_RE.test(l));
+  // existing 已釐清 section: add to it; otherwise create it right after 待釐清問題
+  const before = lines.slice(0, restLeft ? q[0] : q[0] - 1), after = lines.slice(q[1]);
+  const mid = restLeft ? keep.join('\n').replace(/\s+$/, '').split('\n').concat('') : [];
+  let merged = [...before, ...mid, ...after];
+  const d = section(merged, '已釐清');
+  if (d) {
+    let e = d[1]; while (e > d[0] && !merged[e - 1].trim()) e--;
+    merged.splice(e, 0, ...out);
+  } else {
+    const at = before.length + mid.length;
+    merged.splice(at, 0, ...(at > 0 && merged[at - 1].trim() ? [''] : []), '## 已釐清', ...out, '');
+  }
+  return { md: merged.join('\n'), moved: out.filter((l) => l.startsWith('- ✅')).length };
+}
+
+module.exports = { MARK, listItems, applyAnswers, answerLinks, resolveQuestions };

@@ -412,6 +412,7 @@ const UPDATE_RULES = `
 - 以目前的筆記內容為基礎（使用者可能手動改過），原始素材只用來對照原意；不要新增原文沒有的事實。
 - 一定要保留：已打勾的待辦（- [x]，連同後面的 ✅ 日期）、待辦後面的 📅 日期、「💬 我的回答：…」子項目（放回對應的問題或待辦底下）、使用者自己加的段落。
 - 寫成「…（詳見 → [[…]]）」的行是先前拆出去的名詞解釋，照原樣保留，不要把它展開回完整說明。
+- 「## 已釐清」章節是使用者已經解決的問題紀錄，整段照原樣保留，不要改寫、不要搬回「待釐清問題」。
 - TITLE 照抄目前的標題；EXPIRES、REMIND 照抄目前的值；AGENT 寫 no。只輸出一篇筆記。
 
 這次更新一定要做的修正（逐項檢查，不要只是照抄）：
@@ -746,6 +747,10 @@ ${'{{SANDBOX}}'}
 
 輸出格式（只輸出以下內容，不要前言、結語或 code block）：
 DONE: <真正成功完成的待辦（失敗、只給建議、需要使用者處理的都不算），必須和筆記中「- [ ] 」後面的文字一字不差；每個一行，每行都以 DONE: 開頭；沒有完成任何待辦就完全不要寫 DONE，也不要解釋>
+RESOLVED: <已經釐清的待釐清問題，必須和筆記中問題的文字一字不差> | <一句話結論，30 字內>
+  - 寫 RESOLVED 的情況：使用者用「💬 我的回答」回答了，或你查到明確的事實答案（例如規格、優缺點、定義）。
+  - 不要寫 RESOLVED 的情況：問題的核心是要使用者拍板（例如「要採用哪一種」），而他還沒回答；查不到或只能猜。一題同時有事實部分和要拍板的部分時，不算釐清。
+  - 每題一行；沒有就不要寫。系統會把這些問題從「待釐清問題」移到「已釐清」。
 === MAIN ===
 ### 待釐清問題
 **<問題原文>**
@@ -863,7 +868,7 @@ async function kickAgent() {
     const parts = [];
     if (counts.new) parts.push(`新增 ${counts.new} 篇`);
     if (counts.append) parts.push(`補充 ${counts.append} 篇`);
-    const msg = '查完了' + (parts.length ? `，${parts.join('、')}研究筆記` : '，結果已寫回筆記') + (ticked ? `，完成 ${ticked} 項待辦` : '');
+    const msg = '查完了' + (parts.length ? `，${parts.join('、')}研究筆記` : '，結果已寫回筆記') + (ticked ? `，完成 ${ticked} 項待辦` : '') + (counts.resolved ? `，釐清 ${counts.resolved} 題` : '');
     await notify('🔎 Agent 完成：' + (fm.title || path.basename(job.note).replace(/\.md$/, '')), msg, '/?note=' + encodeURIComponent(job.note));
   } catch (e) {
     job.status = 'error'; job.error = e.message.slice(0, 500); job.finishedAt = new Date().toISOString(); agentStore.save();
@@ -1009,11 +1014,15 @@ async function writeAgentResult(file, output, job) {
     const re = new RegExp(`^(\\s*[-*] )\\[ \\]( ${esc}\\s*)$`, 'm');
     if (re.test(md)) { md = md.replace(re, '$1[x]$2'); ticked++; }
   }
+  // settled questions -> "## 已釐清" (question + the user's answer + one-line conclusion)
+  const rq = answers.resolveQuestions(md, parsed.resolved || []);
+  md = rq.md;
+  if (rq.moved) log('agent: resolved', rq.moved, 'questions in', path.basename(file));
   const section = `\n## Agent 研究結果\n\n> 🔎 由 Agent（${modelLabel(CFG.agentModel)}）於 ${localISO(new Date()).replace('T', ' ')} 自動查詢整理，請自行查證重要資訊。\n\n${content}\n`;
   const footer = md.search(/\n---\n\n<details>|\n<details>/);
   md = footer >= 0 ? md.slice(0, footer).replace(/\s+$/, '\n') + section + md.slice(footer) : md.replace(/\s+$/, '\n') + section;
   await fsp.writeFile(file, utf8NoBom(md.replace(/\n/g, nl)));
-  return { ticked, counts };
+  return { ticked, counts: { ...counts, resolved: rq.moved } };
 }
 
 // ---------- to-dos across the whole vault ----------

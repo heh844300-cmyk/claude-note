@@ -35,3 +35,17 @@ assert(out.split('BASB 摘要。').length === 2 && out.includes('再一次：[[C
 const two = L.renderMain('{{U1}} {{U2}}', [...units, { id: 'U2', title: 'B2', summary: 's', body: 'y' }],
   new Map([['U1', { action: 'append', rel: 'Claude-Notes/研究/BASB.md' }], ['U2', { action: 'link', rel: 'Claude-Notes/研究/BASB.md' }]]));
 assert(two.text.split('研究/BASB|').length === 4 && !two.text.includes('🔗') && two.counts.link === 0, 'same note not listed as both ➕ and 🔗');
+
+// settled questions move to "## 已釐清"
+const qmd = '# t\n\n## 待辦事項\n- [ ] x\n\n## 待釐清問題\n- 表達要產出什麼？\n  - 💬 我的回答：文章、摘要\n- 要採用哪一種分類？\n- 各方式的優缺點？\n\n## 相關概念\n- [[A]]：a\n';
+const rq = A.resolveQuestions(qmd, [{ question: '表達要產出什麼?', conclusion: '先做週摘要' }, { question: '各方式的優缺點？', conclusion: '資料夾直覺、標籤好篩選' }, { question: '不存在的題', conclusion: 'x' }]);
+assert(rq.moved === 2, 'two questions moved (punctuation-insensitive match), unknown ignored');
+assert(rq.md.includes('## 待釐清問題\n- 要採用哪一種分類？\n\n## 已釐清\n- ✅ 表達要產出什麼？\n  - 💬 我的回答：文章、摘要\n  - 結論：先做週摘要\n- ✅ 各方式的優缺點？\n  - 結論：資料夾直覺、標籤好篩選\n\n## 相關概念'), 'open one stays; settled ones (with answer + conclusion) in 已釐清 before 相關概念: ' + JSON.stringify(rq.md));
+const rq2 = A.resolveQuestions(rq.md, [{ question: '要採用哪一種分類？', conclusion: '用標籤' }]);
+assert(!rq2.md.includes('## 待釐清問題') && rq2.md.includes('- 結論：資料夾直覺、標籤好篩選\n- ✅ 要採用哪一種分類？\n  - 結論：用標籤\n'), 'last open question: section removed, added to the existing 已釐清');
+assert(A.resolveQuestions(qmd, []).md === qmd, 'nothing resolved -> unchanged');
+assert(A.listItems(rq.md).filter((x) => x.kind === 'q').length === 1, 'answer box only offers the open question');
+const P = L.parseResearch('DONE: a\nRESOLVED: 表達要產出什麼？ | 先做週摘要\n=== MAIN ===\n### x\ny');
+assert(P.done[0] === 'a' && P.resolved[0].question === '表達要產出什麼？' && P.resolved[0].conclusion === '先做週摘要' && !L.renderMain(P.main, [], new Map()).text.includes('RESOLVED'), 'RESOLVED lines parsed, never shown');
+const P2 = L.parseResearch('=== MAIN ===\n### 待釐清問題\n答案\n\nRESOLVED: 表達要產出什麼？ | 結論\nDONE: b\n');
+assert(P2.resolved.length === 1 && P2.done[0] === 'b' && !P2.main.includes('RESOLVED') && !P2.main.includes('DONE'), 'RESOLVED / DONE at the end of the output are found too');

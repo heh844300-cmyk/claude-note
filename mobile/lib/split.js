@@ -63,7 +63,7 @@ function insertBackLink(file, overviewFile, overviewTitle) {
 // the part of a claude-note note that may be split: after "# title", before 相關概念 / Agent results / footers
 function splittableRegion(md) {
   const start = (() => { const m = md.match(/^# .*$/m); return m ? m.index + m[0].length : 0; })();
-  const ends = [/\n##\s*相關概念\s*\n/, /\n##\s*Agent 研究結果\s*\n/, /\n## 附件照片\s*\n/, /\n---\n\n<details>/, /\n<details>/]
+  const ends = [/\n##\s*已釐清\s*\n/, /\n##\s*相關概念\s*\n/, /\n##\s*Agent 研究結果\s*\n/, /\n## 附件照片\s*\n/, /\n---\n\n<details>/, /\n<details>/]
     .map((re) => { const i = md.slice(start).search(re); return i >= 0 ? start + i : md.length; });
   return { start, end: Math.min(...ends) };
 }

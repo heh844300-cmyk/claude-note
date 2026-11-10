@@ -80,6 +80,14 @@ function preserve(oldBody, newBody) {
     else missing.push(it);
   }
   for (const it of missing) warnings.push(`你的回答沒有地方放（原題：${it.text}）：${it.answer}`);
+  // the "## 已釐清" record is the user's history: if the AI dropped it, put the old one back (before 相關概念)
+  const oldDone = (oldBody.replace(/\r\n/g, '\n').match(/^##\s*已釐清\s*\n[\s\S]*?(?=\n##\s|(?![\s\S]))/m) || [])[0];
+  if (oldDone && !/^##\s*已釐清\s*$/m.test(body)) {
+    const ls = body.split('\n'); let at = ls.findIndex((l) => /^##\s*相關概念\s*$/.test(l)); if (at < 0) at = ls.length;
+    ls.splice(at, 0, ...oldDone.trim().split('\n'), '');
+    body = ls.join('\n');
+    warnings.push('ℹ️ 已補回 AI 拿掉的「已釐清」章節');
+  }
   // links left by an earlier term split
   for (const m of oldBody.matchAll(/（詳見 → (\[\[[^\]]+\]\])）/g)) {
     const target = m[1].replace(/\|.*\]\]$/, '');
