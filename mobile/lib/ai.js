@@ -25,7 +25,17 @@ function createAI({ CFG, run, log }) {
 
   // ---------- Codex CLI (ChatGPT subscription) ----------
   let codexSeq = 0;
-  async function codex({ prompt, model, images = [], search = false, timeoutMs }) {
+  // sandboxCmd = { command, args }: adds our sandbox MCP server, with ONLY its sandbox_run tool pre-approved
+  // (codex exec cannot ask for approval; per-tool approval verified on codex-cli 0.160.0). Never a bypass flag.
+  const toml = (s) => JSON.stringify(String(s));
+  const codexSandboxArgs = (c) => !c ? [] : [
+    '-c', `mcp_servers.sandbox.command=${toml(c.command)}`,
+    '-c', `mcp_servers.sandbox.args=[${c.args.map(toml).join(',')}]`,
+    '-c', 'mcp_servers.sandbox.tool_timeout_sec=900',
+    '-c', 'mcp_servers.sandbox.startup_timeout_sec=60',
+    '-c', 'mcp_servers.sandbox.tools.sandbox_run.approval_mode="approve"',
+  ];
+  async function codex({ prompt, model, images = [], search = false, sandboxCmd = null, timeoutMs }) {
     if (!CFG.codex || !fs.existsSync(CFG.codex)) throw new Error('找不到 Codex CLI（config.json 的 "codex"），請重新執行安裝精靈');
     // always-empty working root OUTSIDE any git repo, so Codex finds no project instructions (AGENTS.md) or .codex config
     const empty = CFG.codexWorkDir || path.join(require('os').tmpdir(), 'claude-note-codex-empty');
@@ -33,7 +43,7 @@ function createAI({ CFG, run, log }) {
     for (const f of fs.readdirSync(empty)) fs.rmSync(path.join(empty, f), { recursive: true, force: true });
     const outFile = path.join(CFG.dataRoot, `codex-out-${process.pid}-${++codexSeq}.txt`);
     const args = [CFG.codex, ...(search ? ['--search'] : []), 'exec', '-s', 'read-only', ...CODEX_OFF,
-      '--skip-git-repo-check', '--ephemeral', '--ignore-user-config', '--color', 'never',
+      '--skip-git-repo-check', '--ephemeral', '--ignore-user-config', '--color', 'never', ...codexSandboxArgs(sandboxCmd),
       ...(model ? ['-m', model] : []), ...images.map((i) => '--image=' + i), '-C', empty, '-o', outFile, '-'];
     try {
       await run(process.execPath, args, { input: prompt, cwd: empty, timeoutMs });
@@ -87,14 +97,14 @@ function createAI({ CFG, run, log }) {
     { type: 'function', function: { name: 'fetch_url', description: '讀取一個公開網頁的文字內容（只能讀公開網路上的 http/https 網頁）。',
       parameters: { type: 'object', properties: { url: { type: 'string', description: '網址' } }, required: ['url'] } } },
   ];
-  async function research({ prompt, model, cwd, timeoutMs, sandbox = false, mcpConfig }) {
+  async function research({ prompt, model, cwd, timeoutMs, sandbox = false, mcpConfig, sandboxCmd }) {
     if (CFG.provider === 'claude') {
       const args = ['-p', 'Follow the instructions in the input above.', '--model', model, ...claudeBase,
         '--tools', 'WebSearch', 'WebFetch', '--allowedTools', 'WebSearch', 'WebFetch', ...(sandbox ? ['mcp__sandbox__sandbox_run'] : [])];
       if (sandbox) args.push('--mcp-config', mcpConfig);
       return (await run(CFG.claude, args, { input: prompt, cwd, timeoutMs })).stdout;
     }
-    if (CFG.provider === 'codex') return codex({ prompt, model, search: true, timeoutMs });
+    if (CFG.provider === 'codex') return codex({ prompt, model, search: true, sandboxCmd: sandbox ? sandboxCmd : null, timeoutMs });
     if (!agentAvailable()) throw new Error('沒有設定搜尋服務（search），Agent 無法查資料');
     const deadline = Date.now() + timeoutMs;
     const messages = [{ role: 'user', content: prompt + '\n\n（你可以使用 web_search 搜尋、fetch_url 讀網頁。查完後直接輸出最終結果，不要再呼叫工具。）' }];

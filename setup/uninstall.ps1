@@ -50,12 +50,12 @@ Say "  你的筆記一律保留，不會被刪除。" Green
 if (-not (YesNo "go" "確定要解除安裝嗎？" $false)) { Say "已取消，什麼都沒有改。"; exit 0 }
 
 # ---------- 1. stop ----------
-Title "1/5 停止伺服器"
+Title "1/6 停止伺服器"
 Do-It "停止這個資料夾的伺服器" { & (Join-Path $Mobile "stop-server.cmd") | Out-Null }
 Say "已停止。" Green
 
 # ---------- 2. startup shortcut ----------
-Title "2/5 開機自動啟動"
+Title "2/6 開機自動啟動"
 $startup = [Environment]::GetFolderPath('Startup')
 $sh = New-Object -ComObject WScript.Shell
 $mine = @(Get-ChildItem -LiteralPath $startup -Filter *.lnk -ErrorAction SilentlyContinue | Where-Object {
@@ -64,7 +64,7 @@ if ($mine.Count) { foreach ($f in $mine) { Do-It "刪除捷徑 $($f.Name)" { Rem
 else { Say "沒有找到這個資料夾的開機捷徑。" }
 
 # ---------- 3. tailscale ----------
-Title "3/5 Tailscale 分享設定"
+Title "3/6 Tailscale 分享設定"
 $ts = "C:\Program Files\Tailscale\tailscale.exe"
 if (-not (Test-Path $ts)) { $c = Get-Command tailscale -ErrorAction SilentlyContinue; $ts = if ($c) { $c.Source } else { "" } }
 $offs = @()
@@ -94,21 +94,38 @@ else {
     } else { Say "保留 Tailscale 分享設定。" }
 }
 
-# ---------- 4. folder + data ----------
-Title "4/5 刪除程式資料夾"
+# ---------- 4. Agent sandbox ----------
+Title "4/6 Agent 沙盒"
+$sbxName = if ($cfg -and $cfg.sandboxName) { $cfg.sandboxName } else { "ClaudeSandbox" }
+$sbxDir = if ($cfg -and $cfg.sandboxDir) { $cfg.sandboxDir } else { Join-Path $Root "sandbox" }
+$sbxBlocks = $false   # a sandbox disk left inside the folder would block deleting it
+$sst = $null
+try { $line = (Run-Capture node @((Join-Path $PSScriptRoot "sandbox-setup.js"), "status", "--name", $sbxName, "--dir", $sbxDir)).Split("`n") | Where-Object { $_ -like 'RESULT *' } | Select-Object -Last 1; if ($line) { $sst = $line.Substring(7) | ConvertFrom-Json } } catch {}
+if ($sst -and $sst.exists -and $sst.owned) {
+    Say "這個程式建立的沙盒（WSL 發行版「$sbxName」）還在，約佔 5 GB。"
+    if (YesNo "sandbox" "要刪除沙盒嗎？（只刪這一個，你其他的 WSL 發行版不會動）") {
+        Do-It "移除 WSL 發行版 $sbxName" { $r = Run-Capture node @((Join-Path $PSScriptRoot "sandbox-setup.js"), "remove", "--name", $sbxName, "--dir", $sbxDir); Say ($r.Split("`n") | Select-Object -Last 1) DarkGray }
+        Say "已刪除沙盒。" Green
+    } else { Say "保留沙盒。"; $sbxBlocks = $sbxDir -like ($Root + '*') }
+} elseif ($sst -and $sst.exists) { Say "WSL 裡的「$sbxName」不是這個資料夾建立的，不會動它。" }
+else { Say "沒有沙盒，不用處理。" }
+
+# ---------- 5. folder + data ----------
+Title "5/6 刪除程式資料夾"
 $drafts = @(Get-ChildItem -LiteralPath (Join-Path $Mobile "data\drafts") -Directory -ErrorAction SilentlyContinue).Count
 Say "會刪除整個資料夾 $Root ，包含：程式、設定（API 金鑰）、草稿、推播金鑰、登入紀錄、執行紀錄。"
 if ($drafts) { Say "注意：還有 $drafts 篇草稿沒有上傳到 Obsidian，刪除後就找不回來。" Yellow }
 $vaultInside = $cfg -and $cfg.vault -and ((Resolve-Path -LiteralPath $cfg.vault -ErrorAction SilentlyContinue).Path -like ($Root + '*'))
 $deleteFolder = $false
 if ($vaultInside) { Say "你的筆記庫在這個資料夾裡面，為了保護筆記，不會自動刪除資料夾，請自己處理。" Red }
+elseif ($sbxBlocks) { Say "沙盒還留在這個資料夾裡（WSL 正在使用它的檔案），所以不會刪除資料夾。要刪的話，重新執行解除安裝並選擇刪除沙盒。" Yellow }
 elseif (YesNo "deleteFolder" "要在這個視窗關閉後自動刪除整個資料夾嗎？") { $deleteFolder = $true }
 else { Say "保留資料夾。之後想刪，直接刪除 $Root 即可。" }
 $codexTmp = Join-Path $env:TEMP "claude-note-codex-empty"
 if (Test-Path $codexTmp) { Do-It "刪除暫存資料夾 $codexTmp" { Remove-Item -LiteralPath $codexTmp -Recurse -Force -ErrorAction SilentlyContinue } }
 
 # ---------- 5. other software ----------
-Title "5/5 其他軟體（不會自動移除）"
+Title "6/6 其他軟體（不會自動移除）"
 Say "安裝精靈可能幫你裝過下面這些軟體，其他程式也可能在用，所以不會自動移除。要移除的話，在 PowerShell 執行："
 Say "  Node.js：    winget uninstall --id OpenJS.NodeJS.LTS" White
 Say "  Tailscale：  winget uninstall --id tailscale.tailscale" White

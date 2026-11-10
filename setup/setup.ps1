@@ -14,7 +14,9 @@ param(
     [string]$ConfigOut = "",
     [switch]$NoStartup,
     [switch]$NoLaunch,
-    [switch]$DryRunTailscale
+    [switch]$DryRunTailscale,
+    [string]$SandboxName = "ClaudeSandbox",   # test runs use another name so the real sandbox is never touched
+    [string]$SandboxDir = ""
 )
 $ErrorActionPreference = "Stop"
 $utf8 = New-Object System.Text.UTF8Encoding $false
@@ -68,7 +70,7 @@ Say "  Claude 筆記 安裝精靈" Cyan
 Say "  把想法、照片交給 AI 整理成 Obsidian 筆記。設定只會存在這台電腦。" Gray
 
 # ---------- 1. Node.js ----------
-Title "1/7 檢查 Node.js"
+Title "1/8 檢查 Node.js"
 $node = Get-Command node -ErrorAction SilentlyContinue
 $nodeOk = $false
 if ($node) { $ver = (& node --version) -replace '^v', ''; $nodeOk = ([int]($ver.Split('.')[0]) -ge 20); Say "找到 Node.js $ver" }
@@ -82,7 +84,7 @@ if (-not $nodeOk) {
 }
 
 # ---------- 2. vault ----------
-Title "2/7 選擇 Obsidian 筆記庫"
+Title "2/8 選擇 Obsidian 筆記庫"
 Say "筆記庫就是 Obsidian 打開的那個資料夾。整理好的筆記會放在它底下的 Claude-Notes 資料夾。"
 $vault = ""
 while (-not $vault) {
@@ -102,7 +104,7 @@ while (-not $vault) {
 if (-not (Test-Path -LiteralPath (Join-Path $vault ".obsidian"))) { Say "提醒：這個資料夾還沒被 Obsidian 開過（沒有 .obsidian），確定是筆記庫嗎？之後也可以重新執行精靈修改。" Yellow }
 
 # ---------- 3. AI ----------
-Title "3/7 選擇 AI"
+Title "3/8 選擇 AI"
 $providers = @(
     "Claude 訂閱（用 Claude Code 登入，不需要 API 金鑰）",
     "ChatGPT 訂閱（用 Codex CLI 登入，不需要 API 金鑰）",
@@ -189,7 +191,7 @@ if ($p -eq 1) {
     $cfg.vision = (YesNo "vision" "整理用的模型能讀圖片嗎？（不確定就選 Y，不行的話照片仍會附在筆記裡）")
 
     # ---------- 4. search ----------
-    Title "4/7 Agent 的網路搜尋（選填）"
+    Title "4/8 Agent 的網路搜尋（選填）"
     Say "Agent 會幫你查筆記裡的待辦與問題、自動補寫名詞筆記。這需要一個搜尋服務的金鑰（費用與免費額度請看各家官網）。"
     $s = Choose "search" "請選擇" @("Tavily（https://tavily.com）", "Brave Search（https://brave.com/search/api/）", "先不要（不使用 Agent）") 1
     if ($s -le 2) {
@@ -197,8 +199,8 @@ if ($p -eq 1) {
         $cfg.search = [ordered]@{ provider = $(if ($s -eq 1) { "tavily" } else { "brave" }); apiKey = $sk }
     } else { $cfg.search = [ordered]@{ provider = ""; apiKey = "" } }
 }
-if ($p -eq 1) { Title "4/7 Agent 的網路搜尋"; Say "Claude Code 內建網路搜尋，不用另外設定。" }
-if ($p -eq 2) { Title "4/7 Agent 的網路搜尋"; Say "Codex 內建網路搜尋（在 OpenAI 的伺服器上執行），不用另外設定。" }
+if ($p -eq 1) { Title "4/8 Agent 的網路搜尋"; Say "Claude Code 內建網路搜尋，不用另外設定。" }
+if ($p -eq 2) { Title "4/8 Agent 的網路搜尋"; Say "Codex 內建網路搜尋（在 OpenAI 的伺服器上執行），不用另外設定。" }
 
 # keep settings this wizard doesn't ask about (e.g. phone / public entrance) when re-running
 if (Test-Path -LiteralPath $ConfigOut) {
@@ -211,7 +213,7 @@ if (Test-Path -LiteralPath $ConfigOut) {
 Say "設定已寫入 $ConfigOut" Green
 
 # ---------- 5. test ----------
-Title "5/7 測試 AI 連線"
+Title "5/8 測試 AI 連線"
 $env:CN_CONFIG = $ConfigOut; $env:CN_SELFTEST = "1"
 $out = Run-Capture node @((Join-Path $Mobile "server.js"))
 Remove-Item Env:CN_SELFTEST; Remove-Item Env:CN_CONFIG
@@ -229,7 +231,7 @@ if ($cfg.provider -eq "openai") {
 }
 
 # ---------- 6. phone & away (optional) ----------
-Title "6/7 手機和外出使用（選填）"
+Title "6/8 手機和外出使用（選填）"
 Say "想在手機上用，或在外面的公用電腦上看筆記，需要 Tailscale（免費）。它讓你的手機安全地連回這台電腦，不用在路由器開任何連接埠。"
 $mobileUrl = ""; $funnelOn = $false
 function Get-TsExe {
@@ -302,8 +304,70 @@ if (YesNo "mobile" "要設定手機和外出使用嗎？（之後也可以重新
     }
 }
 
-# ---------- 7. start ----------
-Title "7/7 啟動"
+# ---------- 7. Agent sandbox (advanced, optional) ----------
+Title "7/8 進階：Agent 沙盒（選填）"
+$cfgNow = Get-Content -LiteralPath $ConfigOut -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($cfgNow.provider -ne "claude" -and $cfgNow.provider -ne "codex") {
+    Say "沙盒只支援 Claude 和 ChatGPT（Codex）訂閱，這次選的 AI 不能用，略過。"
+} else {
+    Say "沙盒是一台隔離的小 Linux（WSL），讓 Agent 遇到「要安裝、測試程式」的待辦時，可以真的裝起來試。"
+    Say "沙盒裡的程式碰不到你電腦上的檔案、筆記伺服器、Tailscale 和區網。沒有沙盒時，這類待辦只會寫出建議步驟。"
+    Say "需要：下載約 2 GB、磁碟空間約 6 GB、10～20 分鐘；如果電腦還沒開 WSL，要系統管理員權限並重新開機一次。" Yellow
+    if (YesNo "sandbox" "要建立沙盒嗎？" $false) {
+        $sbxDir = if ($SandboxDir) { $SandboxDir } else { Join-Path $Root "sandbox" }
+        $drive = (Get-Item -LiteralPath $Root).PSDrive
+        $freeGB = [math]::Round($drive.Free / 1GB, 1)
+        $go = $true
+        if ($freeGB -lt 6) { Say "磁碟 $($drive.Name): 只剩 $freeGB GB，至少要 6 GB，略過沙盒。" Red; $go = $false }
+        $wslcfg = Join-Path $env:USERPROFILE ".wslconfig"
+        if ($go -and (Test-Path $wslcfg) -and ((Get-Content $wslcfg -Raw) -match 'networkingMode\s*=\s*mirrored')) {
+            Say "注意：你的 WSL 設成 mirrored 網路模式，隔離規則沒有在這種模式下測試過；稍後的隔離檢查沒通過的話，沙盒不會啟用。" Yellow
+        }
+        $sbxJs = Join-Path $PSScriptRoot "sandbox-setup.js"
+        if ($go) {
+            $st = (Run-Capture node @($sbxJs, "status", "--name", $SandboxName, "--dir", $sbxDir)).Split("`n") | Where-Object { $_ -like 'RESULT *' } | Select-Object -Last 1
+            $st = if ($st) { $st.Substring(7) | ConvertFrom-Json } else { $null }
+            if (-not $st -or -not $st.wsl) {
+                Say "這台電腦還沒有啟用 WSL。" Yellow
+                if (YesNo "installWsl" "要現在安裝嗎？（會跳出系統管理員權限確認，裝完要重新開機）") {
+                    try {
+                        Start-Process wsl.exe -ArgumentList "--install", "--no-distribution" -Verb RunAs -Wait
+                        Say "WSL 安裝完成。請重新開機，開機後再執行一次 setup.cmd，到這一步選 Y 就會接著建立沙盒。" Green
+                    } catch { Say ("WSL 安裝沒有完成：" + $_.Exception.Message) Red }
+                    Say "如果安裝時出現「虛擬化未啟用」之類的錯誤，要到電腦的 BIOS 開啟虛擬化（Intel VT-x 或 AMD-V），可以搜尋你的電腦型號加「開啟虛擬化」。" Gray
+                }
+                $go = $false
+            }
+        }
+        if ($go) {
+            # what the sandbox must NOT reach: this PC on Tailscale and the home router
+            $tsIp = "100.100.100.100"; $tsName = "example.ts.net"
+            $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
+            if (Test-Path $tsExe) { try { $j = (Run-Capture $tsExe @("status", "--json")) | ConvertFrom-Json; if ($j.Self.TailscaleIPs) { $tsIp = @($j.Self.TailscaleIPs)[0] }; if ($j.Self.DNSName) { $tsName = ([string]$j.Self.DNSName).TrimEnd('.') } } catch {} }
+            $lanGw = ""
+            try { $lanGw = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction Stop | Where-Object { $_.NextHop -ne "0.0.0.0" } | Sort-Object RouteMetric | Select-Object -First 1).NextHop } catch {}
+            $res = $null
+            & node $sbxJs install --name $SandboxName --dir $sbxDir --tailnet-ip $tsIp --tailnet-name $tsName --lan-gw "$lanGw" | ForEach-Object {
+                if ($_ -like 'RESULT *') { $res = $_.Substring(7) | ConvertFrom-Json } else { Say $_ }
+            }
+            if ($res -and $res.ok) {
+                $cfgNow | Add-Member -NotePropertyName sandbox -NotePropertyValue $true -Force
+                $cfgNow | Add-Member -NotePropertyName sandboxName -NotePropertyValue $SandboxName -Force
+                if ($SandboxDir) { $cfgNow | Add-Member -NotePropertyName sandboxDir -NotePropertyValue $SandboxDir -Force }
+                [IO.File]::WriteAllText($ConfigOut, ($cfgNow | ConvertTo-Json -Depth 5), $utf8)
+                Say "沙盒建立完成，隔離檢查全部通過 ✔ Agent 之後遇到要安裝、測試的待辦，會在沙盒裡實際試。" Green
+            } else {
+                $cfgNow | Add-Member -NotePropertyName sandbox -NotePropertyValue $false -Force
+                [IO.File]::WriteAllText($ConfigOut, ($cfgNow | ConvertTo-Json -Depth 5), $utf8)
+                Say ("沙盒沒有啟用：" + $(if ($res) { $res.error } else { "安裝程式沒有回應" })) Red
+                if ($res -and $res.bad) { $res.bad | ForEach-Object { Say ("  " + $_) Red } }
+            }
+        }
+    } elseif ($cfgNow.sandbox) { Say "保留之前建立的沙盒。" }
+}
+
+# ---------- 8. start ----------
+Title "8/8 啟動"
 $vbs = Join-Path $Mobile "start-hidden.vbs"
 if (-not $NoStartup) {
     if (YesNo "startup" "要開機時自動在背景啟動嗎？（建議）") {

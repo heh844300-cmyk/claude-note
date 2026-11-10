@@ -36,7 +36,9 @@ const CFG = {
   agentMaxRounds: 12,                             // provider 'openai': tool-call rounds per Agent job
   agentMaxSearches: 8,
   audio: false,                                   // voice recordings (needs ffmpeg + whisper.cpp)
-  sandbox: false,                                 // Agent sandbox (WSL ClaudeSandbox, Claude provider only)
+  sandbox: false,                                 // Agent sandbox (WSL distro; Claude Code and Codex only)
+  sandboxName: 'ClaudeSandbox',                   // WSL distro name of the sandbox
+  sandboxDir: '',                                 // folder with clean.tar and disk/ (default: <program>/sandbox)
   ffmpeg: 'ffmpeg',
   whisper: path.join(ROOT, '..', 'tools', 'whisper', 'bin', 'Release', 'whisper-cli.exe'),
   whisperModel: path.join(ROOT, '..', 'tools', 'whisper', 'ggml-large-v3-turbo-q5_0.bin'),
@@ -74,9 +76,12 @@ const TRASH_DIR = path.join(CFG.vault, '.trash');
 for (const d of [DRAFTS, AGENT_CWD]) fs.mkdirSync(d, { recursive: true });
 // MCP config for the agent's sandbox tool (forward slashes: the CLI launches it through a shell)
 const SANDBOX_MCP = path.join(CFG.dataRoot, 'sandbox-mcp.json');
-const SANDBOX_ON = !!CFG.sandbox && CFG.provider === 'claude' && fs.existsSync(path.join(ROOT, '..', 'sandbox', 'clean.tar'));
-fs.writeFileSync(SANDBOX_MCP, JSON.stringify({ mcpServers: { sandbox: { type: 'stdio', command: 'node',
-  args: [path.join(ROOT, 'lib', 'sandbox-mcp.js').replace(/\\/g, '/')] } } }, null, 2));
+const SANDBOX_DIR = path.resolve(CFG.sandboxDir || path.join(ROOT, '..', 'sandbox'));
+// Claude Code and Codex can both use the sandbox; OpenAI-compatible APIs cannot
+const SANDBOX_ON = !!CFG.sandbox && (CFG.provider === 'claude' || CFG.provider === 'codex') && fs.existsSync(path.join(SANDBOX_DIR, 'clean.tar'));
+// node + args that start the sandbox MCP server (forward slashes: the CLIs pass them through a shell / TOML)
+const SANDBOX_CMD = { command: 'node', args: [path.join(ROOT, 'lib', 'sandbox-mcp.js'), '--name', CFG.sandboxName || 'ClaudeSandbox', '--dir', SANDBOX_DIR].map((a) => a.replace(/\\/g, '/')) };
+fs.writeFileSync(SANDBOX_MCP, JSON.stringify({ mcpServers: { sandbox: { type: 'stdio', ...SANDBOX_CMD } } }, null, 2));
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const ai = require('./lib/ai').createAI({ CFG, run: (...a) => run(...a), log });
@@ -569,7 +574,7 @@ async function kickAgent() {
       ? '- 需要安裝、執行、測試程式的待辦：用 sandbox_run 工具在隔離的 Linux 沙盒裡實際安裝與測試（沙盒可上網，但碰不到使用者的電腦）。先查好官方安裝方式再動手；失敗時讀錯誤訊息、最多換兩種做法。不要在沙盒裡輸入任何使用者的帳號或金鑰。'
       : '- 需要在電腦上安裝、執行、測試程式的待辦：不要做，標記為「🧪 待沙盒」，並寫出你查到的建議步驟（例如安裝指令、需求環境）。');
     const out = await ai.research({ prompt: prompt + '\n\n===== 筆記開始 =====\n' + md + '\n===== 筆記結束 =====\n',
-      model: CFG.agentModel, cwd: AGENT_CWD, timeoutMs: CFG.agentTimeoutMs, sandbox: SANDBOX_ON, mcpConfig: SANDBOX_MCP });
+      model: CFG.agentModel, cwd: AGENT_CWD, timeoutMs: CFG.agentTimeoutMs, sandbox: SANDBOX_ON, mcpConfig: SANDBOX_MCP, sandboxCmd: SANDBOX_CMD });
     await fsp.writeFile(path.join(AGENT_CWD, job.id + '.md'), utf8NoBom(out)).catch(() => {}); // raw output kept for safety
     const { ticked, counts } = await writeAgentResult(file, out, job);
     job.status = 'done'; job.ticked = ticked; job.counts = counts; job.finishedAt = new Date().toISOString(); agentStore.save();

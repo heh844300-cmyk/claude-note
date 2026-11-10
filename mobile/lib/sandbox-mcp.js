@@ -6,8 +6,12 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const DISTRO = 'ClaudeSandbox';
-const SANDBOX_DIR = path.join(__dirname, '..', '..', 'sandbox');
+// --name <distro> --dir <folder with clean.tar, disk/ and the scripts>  (defaults: ClaudeSandbox, ../../sandbox)
+const argv = process.argv.slice(2);
+const arg = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
+const DISTRO = arg('--name', 'ClaudeSandbox');
+const SANDBOX_DIR = path.resolve(arg('--dir', path.join(__dirname, '..', '..', 'sandbox')));
+const SCRIPTS_DIR = path.join(__dirname, '..', '..', 'sandbox');   // ensure-sandbox.sh lives with the program
 const SNAPSHOT = path.join(SANDBOX_DIR, 'clean.tar');
 const DISK_DIR = path.join(SANDBOX_DIR, 'disk');
 const LOG = path.join(__dirname, '..', 'logs', 'sandbox.log');
@@ -38,7 +42,7 @@ async function prepare() {
   const imp = await wsl(['--import', DISTRO, DISK_DIR, SNAPSHOT, '--version', '2'], '', 300000);
   if (imp.code !== 0) throw new Error('沙盒重置失敗：' + imp.out.slice(-300));
   // install the current lockdown script from the Windows side (single source of truth)
-  const script = fs.readFileSync(path.join(SANDBOX_DIR, 'ensure-sandbox.sh'), 'utf8').replace(/^﻿/, '').replace(/\r/g, '');
+  const script = fs.readFileSync(path.join(SCRIPTS_DIR, 'ensure-sandbox.sh'), 'utf8').replace(/^﻿/, '').replace(/\r/g, '');
   const inst = await wsl(['-d', DISTRO, '-u', 'root', '--', 'bash', '-c', 'cat > /usr/local/sbin/ensure-sandbox.sh && chmod 700 /usr/local/sbin/ensure-sandbox.sh'], script, 60000);
   if (inst.code !== 0) throw new Error('沙盒設定失敗：' + inst.out.slice(-300));
   const ens = await wsl(['-d', DISTRO, '-u', 'root', '--', '/usr/local/sbin/ensure-sandbox.sh'], '', 60000);
