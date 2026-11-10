@@ -341,13 +341,13 @@ if ($cfgNow.provider -ne "claude" -and $cfgNow.provider -ne "codex") {
         }
         if ($go) {
             # what the sandbox must NOT reach: this PC on Tailscale and the home router
-            $tsIp = "100.100.100.100"; $tsName = "example.ts.net"
+            $tsIp = ""; $tsName = ""   # empty = no Tailscale: those two checks are skipped
             $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
             if (Test-Path $tsExe) { try { $j = (Run-Capture $tsExe @("status", "--json")) | ConvertFrom-Json; if ($j.Self.TailscaleIPs) { $tsIp = @($j.Self.TailscaleIPs)[0] }; if ($j.Self.DNSName) { $tsName = ([string]$j.Self.DNSName).TrimEnd('.') } } catch {} }
             $lanGw = ""
             try { $lanGw = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction Stop | Where-Object { $_.NextHop -ne "0.0.0.0" } | Sort-Object RouteMetric | Select-Object -First 1).NextHop } catch {}
             $res = $null
-            & node $sbxJs install --name $SandboxName --dir $sbxDir --tailnet-ip $tsIp --tailnet-name $tsName --lan-gw "$lanGw" | ForEach-Object {
+            & node $sbxJs install --name $SandboxName --dir $sbxDir --tailnet-ip "$tsIp" --tailnet-name "$tsName" --lan-gw "$lanGw" | ForEach-Object {
                 if ($_ -like 'RESULT *') { $res = $_.Substring(7) | ConvertFrom-Json } else { Say $_ }
             }
             if ($res -and $res.ok) {

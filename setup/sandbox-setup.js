@@ -67,12 +67,17 @@ async function isolation(env) {
     const st = await status();
     if (st.exists && !st.owned) return done({ ok: false, error: `WSL 裡的「${NAME}」不是這個程式建立的，不會刪除它。` });
     if (st.exists) { await wsl(['--terminate', NAME]); const u = await wsl(['--unregister', NAME], '', 300000); if (u.code !== 0) return done({ ok: false, error: u.out.slice(-300) }); }
-    fs.rmSync(DISK, { recursive: true, force: true }); fs.rmSync(SNAP, { force: true });
+    // only delete files that are verifiably the sandbox's: disk/ must hold its ext4.vhdx (or be empty after unregister)
+    const diskFiles = fs.existsSync(DISK) ? fs.readdirSync(DISK) : [];
+    if (diskFiles.every((f) => f.toLowerCase() === 'ext4.vhdx')) {
+      fs.rmSync(DISK, { recursive: true, force: true });
+      if (st.owned || st.exists) fs.rmSync(SNAP, { force: true });
+    } else say(`沒有刪除 ${DISK}：裡面有不是沙盒的檔案`);
     return done({ ok: true });
   }
 
   if (cmd !== 'install') return done({ ok: false, error: 'usage: status|install|remove' });
-  const env = { TAILNET_IP: arg('--tailnet-ip', '100.100.100.100'), TAILNET_NAME: arg('--tailnet-name', 'example.ts.net'), LAN_GW: arg('--lan-gw', '') };
+  const env = { TAILNET_IP: arg('--tailnet-ip', ''), TAILNET_NAME: arg('--tailnet-name', ''), LAN_GW: arg('--lan-gw', '') };
   let st = await status();
   if (!st.wsl) return done({ ok: false, needWsl: true, error: 'WSL 還沒有安裝或還沒啟用' });
   if (st.exists && !st.owned) return done({ ok: false, error: `WSL 裡已經有一個叫「${NAME}」的發行版，而且不是這個程式建立的。為了不動到它，沙盒安裝停止。` });
