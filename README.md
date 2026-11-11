@@ -1,6 +1,6 @@
 # Claude 筆記（Claude Note）
 
-![Version](https://img.shields.io/badge/version-V23.1-5b4bdb)
+![Version](https://img.shields.io/badge/version-V23.2-5b4bdb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/npm%20dependencies-0-brightgreen)
@@ -53,6 +53,7 @@ AI 可以選 **Claude 訂閱**、**ChatGPT 訂閱（Codex CLI）**，或任何 *
 | **一次多主題自動拆篇** | 不相關的主題拆成多篇（預設最多 6 篇，`config.json` 的 `maxTopics` 可以改），另外建一篇「總覽」互相連結 |
 | **名詞解釋拆成獨立筆記** | 解釋名詞的段落移到 `研究/`（預設每篇最多 5 個，`maxTerms` 可以改），原處留「摘要（詳見 → [[連結]]）」，和既有筆記去重 |
 | **到期與提醒** | 短期記事到期後移到 `.trash`；提醒用 Web Push 推播到手機和電腦 |
+| **自訂整理規則** | 在 `prompt.local.md` 寫自己的規則（例如「標籤一律用中文」「不要思路脈絡」），整理、修改、更新筆記時都會照做；更新程式不會覆蓋 |
 
 ### 🔎 Agent 研究
 
@@ -179,7 +180,7 @@ git clone https://github.com/heh844300-cmyk/claude-note.git ClaudeNote
 
 ### 進階設定（`mobile/config.json`）
 
-安裝精靈只會問必要的設定；其他行為可以直接編輯 `mobileconfig.json`，在大括號裡加上想改的鍵，存檔後重新啟動伺服器（`mobilestop-server.cmd` 再雙擊 `mobilestart-hidden.vbs`，或重新開機）。重新執行 `setup.cmd` 時，這些自己加的設定會保留。
+安裝精靈只會問必要的設定；其他行為可以直接編輯 `mobile\config.json`，在大括號裡加上想改的鍵，存檔後重新啟動伺服器（`mobile\stop-server.cmd` 再雙擊 `mobile\start-hidden.vbs`，或重新開機）。重新執行 `setup.cmd` 時，這些自己加的設定會保留。
 
 | 鍵 | 預設 | 說明 |
 |---|---|---|
@@ -242,6 +243,20 @@ git clone https://github.com/heh844300-cmyk/claude-note.git ClaudeNote
 | Lv.4 | 進階變形 | 邊界條件、常見陷阱、多概念綜合 |
 | Lv.5 | 大師挑戰 | 底層原理、方案取捨、設計與優化 |
 
+### 自訂整理規則（`prompt.local.md`）
+
+AI 整理筆記的基本規則在 `prompt.md`，每次更新都會換成新版，**請不要直接改它**。想加自己的規則，用記事本打開程式資料夾裡的 **`prompt.local.md`**（伺服器第一次啟動時會建立），寫在說明的下面：
+
+```markdown
+- 標籤一律用中文
+- 「重點整理」每點不超過兩行
+- 不需要「思路脈絡」這一節
+```
+
+- 存檔後下一篇筆記就生效，不用重新啟動；App 的整理、修改、「用最新規則更新」和電腦版的剪貼簿整理都會照做
+- 和基本規則衝突時以你的為準，但 `TITLE`、`TAGS` 這些開頭的格式照舊（不然程式讀不懂 AI 的輸出）
+- 這個檔案不進版控，`update.cmd` 不會覆蓋它
+
 ### 電腦版：整理剪貼簿（只支援 Claude Code）
 
 ```powershell
@@ -256,6 +271,9 @@ git clone https://github.com/heh844300-cmyk/claude-note.git ClaudeNote
 ## 更新與版本
 
 雙擊 **`update.cmd`**（執行 `git pull --ff-only` 後重新啟動伺服器）。要改 AI、金鑰、筆記庫等設定，重新執行 `setup.cmd`。
+
+- 你自己的整理規則寫在 `prompt.local.md`，更新不會動到
+- 如果你直接改過 `prompt.md`，更新時會先把你的版本另存成 `prompt.backup-<時間>.local.md`，再換成新版（以前這樣會讓更新失敗）。把裡面你自己加的規則搬到 `prompt.local.md` 就好，備份檔看完可以刪掉
 
 - 網頁右下角顯示目前版本，例如 `V22.5 · 11/11`
 - **更新後第一次打開 App 會跳出「更新內容」視窗**，列出這次改了什麼；點右下角的版本號隨時可以看，裡面有「以前的更新」和「檢查新版本」
@@ -290,7 +308,8 @@ ClaudeNote/
 ├── VERSION                                  # 版本號（大版本.小版本）
 ├── CHANGELOG.md                             # 更新紀錄（App 的「更新內容」視窗讀這個檔）
 ├── LICENSE                                  # MIT 授權條款
-├── prompt.md                                # AI 整理筆記的規則（可以自己改）
+├── prompt.md                                # AI 整理筆記的基本規則（更新時會換成新版）
+├── prompt.local.md                          # 你自己的整理規則（不進版控，更新不會覆蓋）
 ├── claude-note.bat / claude-note.ps1        # 電腦版：整理剪貼簿文字
 ├── setup/
 │   ├── setup.ps1 / uninstall.ps1            # 安裝／解除安裝精靈本體

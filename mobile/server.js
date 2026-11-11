@@ -22,6 +22,7 @@ const dedup = require('./lib/dedup');
 const series = require('./lib/series');
 const learn = require('./lib/learn');
 const htmltext = require('./lib/htmltext');
+const rules = require('./lib/rules');
 
 // ---------- config ----------
 const ROOT = __dirname;
@@ -51,7 +52,8 @@ const CFG = {
   ffmpeg: 'ffmpeg',
   whisper: path.join(ROOT, '..', 'tools', 'whisper', 'bin', 'Release', 'whisper-cli.exe'),
   whisperModel: path.join(ROOT, '..', 'tools', 'whisper', 'ggml-large-v3-turbo-q5_0.bin'),
-  promptFile: path.join(ROOT, '..', 'prompt.md'),
+  promptFile: path.join(ROOT, '..', 'prompt.md'),               // base organizing rules (replaced by update.cmd)
+  localPromptFile: path.join(ROOT, '..', 'prompt.local.md'),    // the user's own rules, appended after the base ones (never tracked)
   dataRoot: path.join(ROOT, 'data'),
   publicDir: path.join(ROOT, 'public'),
   maxBody: 400 * 1024 * 1024,
@@ -373,7 +375,7 @@ async function doOrganize(d) {
   }
   d.model = d.model || pickModel(d);
   d.stage = `${AI_NAME[CFG.provider] || 'AI'}（${modelLabel(d.model)}）整理中…`; await saveDraft(d);
-  const instructions = await fsp.readFile(CFG.promptFile, 'utf8');
+  const instructions = await rules.load(CFG.promptFile, CFG.localPromptFile);
   const ctx = relatedContext((d.text || '') + '\n' + (d.transcript || ''));
   if (d.learn) {                                   // notes from a lesson / quiz: one note, into the topic folder
     const t = { title: d.learn.topicTitle };
@@ -410,7 +412,7 @@ async function doOrganize(d) {
 async function doRevise(d, instruction) {
   d.model = d.model || pickModel(d);
   d.stage = `${AI_NAME[CFG.provider] || 'AI'}（${modelLabel(d.model)}）依你的要求修改中…`; await saveDraft(d);
-  const instructions = await fsp.readFile(CFG.promptFile, 'utf8');
+  const instructions = await rules.load(CFG.promptFile, CFG.localPromptFile);
   const cur = 'TITLE: ' + d.title + '\nTAGS: ' + d.tags.join(', ') + '\nEXPIRES: ' + (d.expires ? d.expires.replace('T', ' ') : 'never') + '\n' +
     (d.reminders.length ? d.reminders.map((r) => `REMIND: ${r.at.replace('T', ' ')} | ${r.text}`).join('\n') : 'REMIND: none') +
     '\nAGENT: ' + (d.agent ? 'yes' : 'no') + '\n\n' + d.body;
@@ -474,7 +476,7 @@ async function doUpdate(d) {
   const oldBody = refresh.regions(refresh.readKeep(raw).md).body.trim();
   d.model = d.model || CFG.bigModel || pickModel(d);   // cross-checking against other notes needs the stronger model
   d.stage = `${AI_NAME[CFG.provider] || 'AI'}（${modelLabel(d.model)}）依最新規則更新中…`; await saveDraft(d);
-  const instructions = await fsp.readFile(CFG.promptFile, 'utf8');
+  const instructions = await rules.load(CFG.promptFile, CFG.localPromptFile);
   const tags = (Array.isArray(fm.tags) ? fm.tags : []).filter((t) => t !== 'claude-note');
   const cur = `TITLE: ${d.title}\nTAGS: ${tags.join(', ')}\nEXPIRES: ${d.expires ? d.expires.replace('T', ' ') : 'never'}\n` +
     (d.reminders.length ? d.reminders.map((r) => `REMIND: ${r.at.replace('T', ' ')} | ${r.text}`).join('\n') : 'REMIND: none') + '\nAGENT: no\n\n' + oldBody;
@@ -2268,6 +2270,7 @@ async function publicRoute(req, res) {
 }
 
 // ---------- startup ----------
+if (rules.ensureLocal(CFG.localPromptFile)) log('created', CFG.localPromptFile); // so users find where their own rules go
 (async () => {
   for (const d of await listDrafts()) {
     if (d.status === 'processing') { d.status = 'error'; d.stage = ''; d.error = '伺服器重新啟動，工作中斷，請按「重試」'; await saveDraft(d); }
