@@ -1667,6 +1667,23 @@ function thinResearchNotes() {
   return files.filter((f) => { try { return library.needsExpansion(fs.readFileSync(path.join(RESEARCH_DIR, f), 'utf8')); } catch { return false; } })
     .map((f) => f.replace(/\.md$/i, '')).filter((n) => library.safeName(n) === n);
 }
+// once: V24.2 expansions linked names that have no note (116 empty gray nodes on one vault) -> make those plain text
+function repairExpansionLinks() {
+  const marker = path.join(CFG.dataRoot, 'expand-links-repaired');
+  if (fs.existsSync(marker)) return;
+  try {
+    const exists = library.nameExists(library.noteNameSet(CFG.vault));
+    let files = 0, links = 0;
+    for (const f of fs.existsSync(RESEARCH_DIR) ? fs.readdirSync(RESEARCH_DIR).filter((x) => /\.md$/i.test(x)) : []) {
+      const abs = path.join(RESEARCH_DIR, f);
+      const k = split.readKeep(abs);
+      const r = library.cleanExpansionLinks(k.md, exists);
+      if (r.count) { split.writeKeep(abs, r.md, k); files++; links += r.count; }
+    }
+    fs.writeFileSync(marker, new Date().toISOString());
+    log('repair: unlinked', links, 'unknown links in', files, 'expanded research notes');
+  } catch (e) { log('repair expansion links failed (will retry next start):', e.message); }
+}
 async function runExpand(job) {
   const file = library.findCaseless(RESEARCH_DIR, job.name + '.md');
   const finish = (result) => { job.status = 'done'; job.result = result; job.finishedAt = new Date().toISOString(); agentStore.save(); };
@@ -1676,10 +1693,15 @@ async function runExpand(job) {
   const sc = library.scanVault(CFG.vault);
   const contexts = library.linkContext(CFG.vault, sc, job.name).filter((c) => path.resolve(CFG.vault, c.rel).toLowerCase() !== path.resolve(file).toLowerCase());
   const ctxText = contexts.map((c) => `----- 筆記「${c.title}」 -----\n摘要：${c.summary || '（無）'}\n提到它的那一行：${c.line}`).join('\n\n');
-  const out = await ai.research({ prompt: library.expandPrompt(job.name, md0, ctxText), model: CFG.agentModel, cwd: AGENT_CWD, timeoutMs: CFG.agentTimeoutMs });
+  const research = fs.readdirSync(RESEARCH_DIR).filter((f) => /\.md$/i.test(f)).map((f) => f.replace(/\.md$/i, ''));
+  const out = await ai.research({ prompt: library.expandPrompt(job.name, md0, ctxText, research), model: CFG.agentModel, cwd: AGENT_CWD, timeoutMs: CFG.agentTimeoutMs });
   await fsp.writeFile(path.join(AGENT_CWD, job.id + '.md'), utf8NoBom(out)).catch(() => {});
   const exp = library.parseExpansion(out);
   if (!exp) throw new Error('Agent 沒有寫出「實際用途」');
+  // links must point at notes that exist: an unknown one would add an empty gray node (often a synonym of an existing note)
+  const un = library.unlinkUnknown(exp.body, library.nameExists(library.noteNameSet(CFG.vault)));
+  if (un.count) log('expand:', job.name, 'unlinked', un.count, 'unknown links');
+  exp.body = un.text;
   // re-read right before writing: the user (or another job) may have changed the note meanwhile
   const k = split.readKeep(file);
   if (!library.needsExpansion(k.md)) return finish('skipped');
@@ -2494,6 +2516,7 @@ if (rules.ensureLocal(CFG.localPromptFile)) log('created', CFG.localPromptFile);
       }
     } catch (e) { log('learn recover', t.id, e.message); }
   }
+  repairExpansionLinks();
   let resumed = 0;
   for (const j of agentJobs()) if (j.status === 'running') { j.status = 'queued'; resumed++; }
   if (resumed) agentStore.save();

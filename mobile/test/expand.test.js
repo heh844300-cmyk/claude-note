@@ -35,3 +35,20 @@ assert(m2.indexOf(L.EXPAND_HEAD) < m2.indexOf('## 相關研究') && m2.indexOf('
 assert(m2.includes('- [官方](https://example.com)') && m2.includes('#### 延伸說明的來源'), 'original sources stay and expansion sources are listed with it');
 const m3 = L.appendExpansion(THIN, { body: '### 實際用途\n- x', sources: '' }, { model: 'm', stamp: 's' });
 assert(!m3.includes('延伸說明的來源'), 'no sources heading when the Agent gave none');
+
+// links in an expansion must point at existing notes
+const known = L.nameExists(new Set(['提示工程', 'rag', '交換器']));
+let u = L.unlinkUnknown('見 [[提示工程]]、[[Prompt Engineering]] 和 [[RAG|檢索增強]]、[[Retrieval-Augmented Generation|RAG 全名]]、[[VPN#設定]]', known);
+assert(u.text === '見 [[提示工程]]、Prompt Engineering 和 [[RAG|檢索增強]]、RAG 全名、VPN', 'unknown links become plain text (alias or name), known ones stay');
+assert(u.count === 3, 'unlinked links are counted');
+assert(known('Claude-Notes/研究/交換器') && known('rag.md'), 'existence checks the file name, case-insensitive, any folder');
+u = L.unlinkUnknown('寫成 `[[筆記名稱]]` 就會連結\n```\n[[範例]]\n```\n![[圖.png]] [[]]', known);
+assert(u.count === 0 && u.text.includes('`[[筆記名稱]]`') && u.text.includes('[[範例]]') && u.text.includes('![[圖.png]]'), 'code spans, fenced code, embeds and empty brackets are left alone');
+const EXP = '---\ngenerated_by: claude-agent\n---\n\n# X\n\n## 內容\n[[Prompt Engineering]] 原本的內容\n\n' + L.EXPAND_HEAD + '\n\n> 🔎\n\n### 實際用途\n- [[Prompt Engineering]] 與 [[提示工程]]\n\n## 相關研究\n- [[Few-shot]]\n';
+const c = L.cleanExpansionLinks(EXP, known);
+assert(c.count === 1 && c.md.includes('- Prompt Engineering 與 [[提示工程]]'), 'repair unlinks inside the 延伸說明 block');
+assert(c.md.includes('[[Prompt Engineering]] 原本的內容') && c.md.includes('- [[Few-shot]]'), 'repair leaves the rest of the note (before and after the block) untouched');
+assert(L.cleanExpansionLinks('# 沒有延伸說明 [[Y]]', known).count === 0, 'notes without an expansion are not changed');
+const p2 = L.expandPrompt('星型拓撲', THIN, '', ['交換器', '星型拓撲', '網狀拓撲']);
+assert(p2.includes('只能連結到這些名稱') && p2.includes('交換器、網狀拓撲') && !p2.includes('交換器、星型拓撲'), 'prompt lists existing note names (not the note itself) as the only link targets');
+assert(L.expandPrompt('x', THIN).includes('整篇都不要加連結'), 'no existing notes -> no links at all');
