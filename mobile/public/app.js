@@ -28,6 +28,7 @@ function show(tab) {
   if (tab === 'vault' && !vaultShown) loadVault(vaultDir);
   if (tab === 'tasks') loadTasks();
   if (tab === 'new') loadSeries();
+  if (tab === 'learn') loadLearn();
   window.scrollTo(0, 0);
 }
 document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => show(b.dataset.tab)));
@@ -74,7 +75,7 @@ async function loadDrafts() {
   const b = $('#draftCount'); b.hidden = !list.length; b.textContent = list.length;
   if (current === 'drafts') {
     $('#draftEmpty').hidden = list.length > 0;
-    const grp = (d) => (d.series ? `<span class="pill grp">📌 ${esc(d.series)}</span>` : '') + (d.update ? `<span class="pill grp">🔄 更新${d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length ? '・⚠️' + d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length : ''}</span>` : !d.group ? '' : d.group.role === 'overview' ? `<span class="pill grp">📑 總覽・${d.group.size} 篇</span>` : `<span class="pill grp">🧩 ${d.group.index}／${d.group.size}</span>`);
+    const grp = (d) => (d.series ? `<span class="pill grp">📌 ${esc(d.series)}</span>` : '') + (d.learn ? `<span class="pill grp">📚 ${esc(d.learn)}</span>` : '') + (d.update ? `<span class="pill grp">🔄 更新${d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length ? '・⚠️' + d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length : ''}</span>` : !d.group ? '' : d.group.role === 'overview' ? `<span class="pill grp">📑 總覽・${d.group.size} 篇</span>` : `<span class="pill grp">🧩 ${d.group.index}／${d.group.size}</span>`);
     $('#draftList').innerHTML = list.map((d) => `<li data-id="${d.id}"${d.group && d.group.role === 'topic' ? ' class="in-group"' : ''}>
       <div class="t">${grp(d)}${esc(d.title || d.preview || '（未命名）')}</div>
       <div class="m"><span class="pill ${d.status}">${STATUS[d.status] || d.status}</span>${esc(d.status === 'processing' ? d.stage : fmtTime(d.createdAt))}
@@ -143,7 +144,8 @@ function fillEdit() {
 // ---- 接續到: which tracked note this draft continues ----
 function fillSeries() {
   const box = $('#seriesBox');
-  box.hidden = !!draft.update || draft.status === 'processing' || !(seriesData.length || draft.series) || !!(draft.group && draft.group.role === 'overview');
+  box.hidden = !!draft.update || !!draft.learn || draft.status === 'processing' || !(seriesData.length || draft.series) || !!(draft.group && draft.group.role === 'overview');
+  if (draft.learn) $('#edTitle').disabled = true;   // learning notes are named after the chapter / quiz
   if (box.hidden) return;
   const known = seriesData.some((s) => s.note === draft.series);
   $('#edSeries').innerHTML = '<option value="-">不接續（一般筆記）</option>' + seriesData.map((s) => `<option value="${esc(s.note)}">📌 ${esc(s.name)}（${esc(s.title)}）</option>`).join('') +
@@ -323,8 +325,8 @@ $('#vSearchForm').onsubmit = async (e) => {
 $('#vBack').onclick = () => show('vault');
 // notes in Claude-Notes open in the full reader (with the Agent box); everything else in the vault reader
 async function openVaultNote(p) {
-  const m = p.match(/^Claude-Notes\/((?:研究\/)?[^/]+\.md)$/);
-  if (m) return openNote(m[1]);
+  const m = p.match(/^Claude-Notes\/((?:研究\/|學習\/[^/]+\/)?[^/]+\.md)$/);
+  if (m && !/^學習\/[^/]+\/(大綱|錯題本)\.md$/.test(m[1])) return openNote(m[1]);   // 大綱 / 錯題本 are system files: read-only view
   try {
     const md = await api('/api/vault/note?path=' + encodeURIComponent(p));
     $('#vPath').textContent = p.replace(/\.md$/i, '');
@@ -553,7 +555,7 @@ api('/api/features').then((f) => {
 // ---------- boot ----------
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').then(notifStatus).catch(() => {});
 const qs = new URLSearchParams(location.search);
-navigator.serviceWorker && navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.openNote) openNote(e.data.openNote); });
+navigator.serviceWorker && navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.openNote) openNote(e.data.openNote); if (e.data && e.data.openLearn) { show('learn'); openTopic(e.data.openLearn); } });
 if (qs.has('note')) { const n = qs.get('note'); history.replaceState(null, '', '/'); loadDrafts(); openNote(n); }
 else if (qs.has('shared')) { toast(qs.get('shared') === '1' ? '已收到分享內容，Claude 整理中' : '分享失敗：沒有可用的內容', 3500); history.replaceState(null, '', '/'); show('drafts'); }
 else loadDrafts();
@@ -774,3 +776,270 @@ $('#verBadge').onclick = async () => {
   toast(verInfo.error ? verInfo.error : verInfo.newer ? `有新版本 ${verInfo.latest.version}，在電腦上雙擊 update.cmd 更新` : `${verInfo.version} 已經是最新版本`, 5000);
 };
 loadVersion(); setInterval(loadVersion, 30 * 60 * 1000);
+
+// ---------- learning (學習) ----------
+let lnTopic = null, lnData = null, lnLessonN = null, lnQuizId = null, lnQuizBack = 'lnTopic', lnTimer = null, lnInfo = { web: true, pdf: true };
+const isKiosk = () => document.body.classList.contains('kiosk-mode');
+const lnApi = (p, o) => api('/api/learn' + p, o);
+const jbody = (m, b) => ({ method: m, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) });
+const enc = encodeURIComponent;
+function lnShow(v) { document.querySelectorAll('#tab-learn .lview').forEach((x) => (x.hidden = x.id !== v)); clearTimeout(lnTimer); window.scrollTo(0, 0); }
+const lnPoll = (fn, ms = 3000) => { clearTimeout(lnTimer); lnTimer = setTimeout(fn, ms); };
+document.querySelectorAll('[data-lback]').forEach((b) => (b.onclick = () => (b.dataset.lback === 'lnList' ? loadLearn() : openTopic(lnTopic))));
+const shortDate = (s) => (s ? s.slice(5).replace('-', '/') : '');
+
+async function loadLearn() {
+  lnShow('lnList');
+  let r; try { r = await lnApi(''); } catch (e) { return toast('讀取失敗：' + e.message); }
+  lnInfo = { web: r.web, pdf: r.pdf };
+  $('#lnEmpty').hidden = r.topics.length > 0;
+  $('#lnNewBox').open = !r.topics.length;
+  $('#lnTopics').innerHTML = r.topics.map((t) => `<li data-topic="${esc(t.id)}"><div class="t">📚 ${esc(t.title)}</div><div class="m">進度 ${t.done}/${t.total} 章` +
+    (t.examDate ? ` · 考試 ${shortDate(t.examDate)}${t.daysLeft >= 0 ? `（還有 ${t.daysLeft} 天）` : '（已結束）'}` : '') + (t.open ? ` · 錯題 ${t.open}` : '') +
+    (t.todayPlan ? `<br>今天：${esc(t.todayPlan)}` : '') + (t.outline && t.outline.status === 'processing' ? '<br>⏳ 大綱產生中…' : '') + '</div></li>').join('');
+}
+$('#lnTopics').addEventListener('click', (e) => { const li = e.target.closest('li[data-topic]'); if (li) openTopic(li.dataset.topic); });
+$('#lnCreate').onclick = async () => {
+  const title = $('#lnTitle').value.trim();
+  if (!title) return toast('請填主題名稱');
+  try {
+    const t = await lnApi('', jbody('POST', { title, goal: $('#lnGoal').value, rules: $('#lnRules').value, examDate: $('#lnExam').value, planTime: $('#lnPlanTime').value }));
+    ['#lnTitle', '#lnGoal', '#lnRules', '#lnExam'].forEach((q) => ($(q).value = ''));
+    toast('已建立，可以先上傳教材，再按「產生大綱」', 4000);
+    lnShow('lnTopic'); openTopic(t.id, true);
+  } catch (e) { toast('建立失敗：' + e.message, 4000); }
+};
+
+async function openTopic(id, fresh) {
+  lnTopic = id;
+  let t; try { t = await lnApi('/' + enc(id)); } catch (e) { return toast(e.message); }
+  lnData = t; lnInfo = { web: t.web, pdf: t.pdf };
+  if ($('#lnTopic').hidden) lnShow('lnTopic');
+  $('#ltTitle').textContent = '📚 ' + t.title;
+  const s = t.summary;
+  $('#ltMeta').textContent = `進度 ${s.done}/${s.total} 章` + (t.examDate ? ` · 考試 ${t.examDate}${s.daysLeft >= 0 ? `（還有 ${s.daysLeft} 天）` : '（已結束）'}` : '') + (t.goal ? ` · ${t.goal}` : '');
+  const plan = t.plan || [];
+  $('#ltToday').hidden = !plan.length;
+  $('#ltToday').innerHTML = plan.length ? '<div class="lbl">🗓️ 讀書計畫</div>' + plan.slice(0, 4).map((d, i) => `<div class="hint left">${i === 0 ? '<b>今天</b>' : shortDate(d.date)}：${esc(d.line)}</div>`).join('') : '';
+  const o = t.outline || {};
+  const busy = o.status === 'processing';
+  $('#ltOutlineState').textContent = busy ? '⏳ 大綱產生中（可能要幾分鐘）' : o.status === 'error' ? '⚠️ ' + (o.error || '失敗') : o.status === 'ready' ? (o.fromMaterials ? '依教材排' : o.web ? 'AI 查證後排' : 'AI 排') : '';
+  $('#ltGenOutline').textContent = t.chapters.length ? '重新產生大綱' : '產生大綱';
+  $('#ltGenOutline').disabled = busy;
+  $('#ltChapters').innerHTML = t.chapters.length ? t.chapters.map((c) => {
+    const ls = t.lessons[c.n];
+    return `<li><button type="button" class="ci" data-done="${c.n}" title="切換完成">${c.status === 'done' ? '✅' : '⬜'}</button>` +
+      `<div class="cb"><div class="ct">第${c.n}章 ${esc(c.title)}${t.levels && t.levels[c.n] ? ` <span class="lv">Lv.${t.levels[c.n].level}</span>` : ''}</div><div class="cp">${esc(c.points.join('、'))}${c.source ? '　📖 ' + esc(c.source) : ''}</div></div>` +
+      `<button type="button" class="cgo" data-lesson="${c.n}">${ls === 'processing' ? '準備中…' : ls === 'ready' ? '繼續' : '上課'}</button></li>`;
+  }).join('') : '<li class="hint left">還沒有大綱。有教材的話先上傳，再按「產生大綱」。</li>';
+  $('#ltQuizBtn').disabled = !t.chapters.length;
+  const open = t.wrong.filter((w) => w.status !== 'mastered').length;
+  $('#ltWrongBtn').textContent = '📕 錯題本' + (open ? `（${open}）` : '');
+  $('#ltMatCount').textContent = t.materials.length ? `${t.materials.length} 份` : '還沒有';
+  $('#ltMats').innerHTML = t.materials.map((m) => `<li><span>${m.type === 'pdf' ? '📄' : m.type === 'image' ? '📷' : m.type === 'html' ? '🌐' : '📝'} ${esc(m.file)}　<span class="hint">${m.kind === 'past' ? '考古題' : '講義'}${m.status === 'processing' ? '・轉文字中…' : m.status === 'error' ? '・⚠️ ' + esc(m.error || '失敗') : ''}</span></span>` +
+    (isKiosk() ? '' : `<button type="button" data-delmat="${esc(m.file)}" aria-label="刪除">✕</button>`) + '</li>').join('');
+  $('#ltMatHint').textContent = '支援 HTML 網頁檔、文字檔、照片' + (t.pdf ? '、PDF（Claude 可以直接讀，包括掃描檔）' : '（目前的 AI 讀不到 PDF，請改用照片或文字）') + '。考古題用來仿照出題風格。';
+  if (fresh) $('#ltMatBox').open = true;
+  $('#ltGoal').value = t.goal || ''; $('#ltRules').value = t.rules || ''; $('#ltExam').value = t.examDate || ''; $('#ltPlanTime').value = t.planTime || '';
+  if (busy || t.materials.some((m) => m.status === 'processing') || Object.values(t.lessons).includes('processing')) lnPoll(() => !$('#lnTopic').hidden && openTopic(id), 4000);
+}
+$('#ltGenOutline').onclick = async () => {
+  if (lnData.chapters.length && !confirm('重新產生大綱？已完成的章節（同名的）會保留打勾。')) return;
+  try { await lnApi('/' + enc(lnTopic) + '/outline', { method: 'POST' }); toast(lnData.materials.length ? '依教材排大綱中…' : (lnInfo.web ? 'AI 查資料後排大綱，可能要幾分鐘' : 'AI 排大綱中…'), 4000); openTopic(lnTopic); }
+  catch (e) { toast(e.message, 4000); }
+};
+$('#ltChapters').addEventListener('click', async (e) => {
+  const d = e.target.closest('[data-done]'), l = e.target.closest('[data-lesson]');
+  if (d) { const c = lnData.chapters.find((x) => x.n === +d.dataset.done); try { await lnApi(`/${enc(lnTopic)}/chapters/${c.n}/done`, jbody('POST', { done: c.status !== 'done' })); openTopic(lnTopic); } catch (err) { toast(err.message); } }
+  if (l) openLesson(+l.dataset.lesson);
+});
+$('#ltMatFile').addEventListener('change', async (e) => {
+  const files = [...e.target.files]; e.target.value = '';
+  if (!files.length) return;
+  const fd = new FormData(); fd.append('kind', $('#ltMatKind').value); files.forEach((f) => fd.append('files', f, f.name));
+  toast('上傳中…', 20000);
+  try { const r = await lnApi('/' + enc(lnTopic) + '/materials', { method: 'POST', body: fd }); toast(`已加入 ${r.added.length} 份` + (r.skipped.length ? `；略過：${r.skipped.join('；')}` : '') + (files.some((f) => f.type.startsWith('image/')) ? '。照片會先轉成文字' : '') +
+    (lnData.chapters.length ? '。大綱已經有了：要讓新教材變成章節，請按「重新產生大綱」（已完成的章節會保留）' : ''), 8000); }
+  catch (err) { toast('上傳失敗：' + err.message, 6000); }
+  openTopic(lnTopic);
+});
+$('#ltMats').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-delmat]'); if (!b) return;
+  if (!confirm(`刪除教材「${b.dataset.delmat}」？（會移到筆記庫的 .trash）`)) return;
+  try { await lnApi(`/${enc(lnTopic)}/materials/${enc(b.dataset.delmat)}`, { method: 'DELETE' }); openTopic(lnTopic); } catch (err) { toast(err.message); }
+});
+$('#ltSave').onclick = async () => {
+  try { await lnApi('/' + enc(lnTopic), jbody('PUT', { goal: $('#ltGoal').value, rules: $('#ltRules').value, examDate: $('#ltExam').value, planTime: $('#ltPlanTime').value })); toast('已儲存'); $('#ltSetBox').open = false; openTopic(lnTopic); }
+  catch (e) { toast(e.message, 4000); }
+};
+$('#ltDelete').onclick = async () => {
+  if (!confirm(`刪除「${lnData.title}」整個主題？大綱、錯題本、章節筆記、教材會一起移到筆記庫的 .trash。`)) return;
+  try { await lnApi('/' + enc(lnTopic), { method: 'DELETE' }); toast('已移到 .trash'); loadLearn(); } catch (e) { toast(e.message, 4000); }
+};
+const vaultOpen = (p, missing) => api('/api/vault/note?path=' + enc(p)).then(() => openVaultNote(p)).catch(() => toast(missing, 3500));
+$('#ltWrongBtn').onclick = () => vaultOpen(lnData.links.wrong, '還沒有錯題 👍');
+$('#ltOutlineBtn').onclick = () => vaultOpen(lnData.links.outline, '還沒有大綱');
+
+const LEVEL_NAMES = ['', '基礎建立', '標準入門', '概念應用', '進階變形', '大師挑戰'];
+// ---- lesson ----
+let llNotesTimer = null;
+async function openLesson(n, start = true) {
+  const entering = lnLessonN !== n || $('#lnLesson').hidden;
+  lnLessonN = n;
+  let r; try { r = await lnApi(`/${enc(lnTopic)}/lesson/${n}`); } catch (e) { return toast(e.message); }
+  const l = r.lesson, c = r.chapter;
+  if (entering) { lnShow('lnLesson'); $('#llNotes').value = (l && l.notes) || ''; $('#llSaved').textContent = ''; }
+  $('#llTitle').textContent = `第${c.n}章 ${c.title}`;
+  if ((!l || l.status === 'none') && start) {
+    try { await lnApi(`/${enc(lnTopic)}/lesson/${n}`, { method: 'POST' }); } catch (e) { return toast(e.message); }
+    return openLesson(n, false);
+  }
+  const busy = !!(l && l.status === 'processing');
+  const ready = !!(l && l.status === 'ready');
+  $('#llStatus').hidden = ready;
+  $('#llStatus').className = 'status' + (l && l.status === 'error' ? ' error' : '');
+  $('#llStatus').innerHTML = busy ? `⏳ 老師正在準備這一章${lnInfo.web ? '（會先上網查證，可能要幾分鐘）' : ''}…<br><small>可以先關掉，晚點再回來。</small>` : l && l.status === 'error' ? '⚠️ ' + esc(l.error) : '';
+  $('#llBody').innerHTML = l && l.content ? renderMd(l.content) : '';
+  const chat = (l && l.chat) || [];
+  const st = (l && l.adapt) || { level: r.level || 2, sc: 0, sw: 0 };
+  $('#llLevel').hidden = !(l && l.status === 'ready');
+  $('#llLevel').textContent = `🎯 小問題等級 Lv.${st.level}（${LEVEL_NAMES[st.level]}）` + (st.sc ? `・連續答對 ${st.sc} 題` : '') + (st.sw ? '・剛剛答錯，再試一次' : '') + '　答對 2 題會升級，連錯 2 題會降一級';
+  const mark = (m) => (m.judge === 'correct' ? ' ✅' : m.judge === 'wrong' ? ' ❌' : '') + (m.event === 'up' ? ` <span class="lv">⬆️ 升到 Lv.${m.level}</span>` : m.event === 'down' ? ` <span class="lv">⬇️ 降到 Lv.${m.level}</span>` : '');
+  $('#llChat').innerHTML = chat.length || (l && l.asking) ? '<div class="chat">' + chat.map((m) => `<div class="cq">🙋 ${esc(m.q)}${mark(m)}</div><div class="ca md">${renderMd(m.a)}</div>`).join('') +
+    (l.asking ? `<div class="cq">🙋 ${esc(l.asking)}</div><div class="ca hint left">回答中…</div>` : '') + '</div>' : '';
+  $('#llAskRow').hidden = !ready;
+  $('#llAskBtn').disabled = !!(l && l.asking);
+  $('#llQuizBtn').disabled = $('#llFinish').disabled = !ready;
+  $('#llRedo').disabled = busy;
+  if (busy || (l && l.asking)) lnPoll(() => !$('#lnLesson').hidden && openLesson(n, false), 4000);
+}
+$('#llAskBtn').onclick = async () => {
+  const q = $('#llAsk').value.trim(); if (!q) return toast('請輸入問題');
+  try { await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/ask`, jbody('POST', { q })); $('#llAsk').value = ''; openLesson(lnLessonN, false); } catch (e) { toast(e.message); }
+};
+async function saveLessonNotes() {
+  clearTimeout(llNotesTimer);
+  if (lnLessonN == null) return;
+  try { await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/notes`, jbody('PUT', { notes: $('#llNotes').value })); $('#llSaved').textContent = '已自動儲存'; } catch { $('#llSaved').textContent = '⚠️ 沒存到'; }
+}
+$('#llNotes').addEventListener('input', () => { $('#llSaved').textContent = '…'; clearTimeout(llNotesTimer); llNotesTimer = setTimeout(saveLessonNotes, 1500); });
+$('#llNotes').addEventListener('blur', () => { if ($('#llSaved').textContent === '…') saveLessonNotes(); });
+$('#llRedo').onclick = async () => {
+  if (!confirm('重新準備這一章的教學內容？你的筆記和問答會保留。')) return;
+  try { await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}`, { method: 'POST' }); openLesson(lnLessonN, false); } catch (e) { toast(e.message); }
+};
+$('#llQuizBtn').onclick = async () => {
+  await saveLessonNotes();
+  try { const r = await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/quiz`, { method: 'POST' }); openQuiz(r.id, 'lnLesson'); } catch (e) { toast(e.message); }
+};
+$('#llFinish').onclick = async () => {
+  await saveLessonNotes();
+  if (!confirm('完成這一章？你的筆記會連同教學重點和小測驗結果交給 AI 整理成草稿，你看過再上傳。')) return;
+  try { const r = await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/finish`, jbody('POST', {})); toast('這章完成了 ✅ 筆記整理中', 3500); openDraft(r.draft); }
+  catch (e) { toast(e.message, 4000); }
+};
+
+// ---- quiz settings ----
+const QTYPES = [['choice', '選擇', 5], ['fill', '填空', 3], ['short', '簡答', 2], ['term', '名詞解釋', 0], ['qa', '問答', 0], ['essay', '申論', 0]];
+$('#ltQuizBtn').onclick = () => {
+  lnShow('lnQuizCfg');
+  if (!$('#qcTypes').children.length) $('#qcTypes').innerHTML = QTYPES.map(([k, n, d]) => `<label>${n}<input type="number" min="0" max="20" value="${d}" data-qt="${k}"></label>`).join('');
+  const past = lnData.materials.some((m) => m.kind === 'past'), wrong = lnData.wrong.filter((w) => w.status !== 'mastered').length;
+  $('#qcMimic').disabled = !past; $('#qcMimic').checked = past;
+  $('#qcWrong').disabled = !wrong; $('#qcWrong').checked = false;
+  $('#qcHint').textContent = (past ? '' : '沒有上傳考古題，所以不能仿照風格。') + (wrong ? `錯題本有 ${wrong} 題待複習。` : '錯題本是空的。') + (lnData.materials.length ? '題目會照你上傳的教材出。' : '沒有教材，題目依 AI 的知識出。');
+  $('#qcRules').value = lnData.quizRules || '';
+  $('#qcScope').innerHTML = lnData.chapters.map((c) => `<label><input type="checkbox" value="${c.n}"> 第${c.n}章 ${esc(c.title)}</label>`).join('');
+};
+$('#qcAll').onclick = () => { const bs = [...document.querySelectorAll('#qcScope input')]; const on = !bs.every((b) => b.checked); bs.forEach((b) => (b.checked = on)); };
+$('#qcGo').onclick = async () => {
+  const counts = {}; document.querySelectorAll('#qcTypes input').forEach((i) => (counts[i.dataset.qt] = +i.value || 0));
+  const body = { counts, rules: $('#qcRules').value, difficulty: $('#qcDiff').value, mimic: $('#qcMimic').checked, wrongOnly: $('#qcWrong').checked, scope: [...document.querySelectorAll('#qcScope input:checked')].map((i) => +i.value) };
+  $('#qcGo').disabled = true;
+  try { const r = await lnApi('/' + enc(lnTopic) + '/quiz', jbody('POST', body)); openQuiz(r.id, 'lnTopic'); } catch (e) { toast(e.message, 4000); }
+  $('#qcGo').disabled = false;
+};
+
+// ---- taking a quiz / results ----
+let lqNotesTimer = null, lqData = null;
+const draftKey = () => 'quiz-' + lnQuizId;
+function readAnswers() {
+  const a = {};
+  for (const q of lqData.questions) {
+    if (q.type === 'choice') { const c = document.querySelector(`#lqForm input[name="q${q.i}"]:checked`); a[q.i] = c ? +c.value : -1; }
+    else if (q.type === 'fill') a[q.i] = [...document.querySelectorAll(`#lqForm input[data-fill="${q.i}"]`)].map((x) => x.value);
+    else { const t = document.querySelector(`#lqForm textarea[data-q="${q.i}"]`); a[q.i] = t ? t.value : ''; }
+  }
+  return a;
+}
+async function openQuiz(id, back) {
+  if (back) lnQuizBack = back;
+  const entering = lnQuizId !== id || $('#lnQuiz').hidden;
+  lnQuizId = id;
+  let z; try { z = await lnApi(`/${enc(lnTopic)}/quiz/${id}`); } catch (e) { return toast(e.message); }
+  lqData = z;
+  if (entering) { lnShow('lnQuiz'); $('#lqNotes').value = z.notes || ''; $('#lqSaved').textContent = ''; $('#lqForm').innerHTML = ''; $('#lqForm').dataset.mode = ''; }
+  $('#lqTitle').textContent = '📝 ' + z.label;
+  const busy = z.status === 'processing' || z.status === 'grading', graded = z.status === 'graded';
+  $('#lqStatus').hidden = !busy && !z.error;
+  $('#lqStatus').className = 'status' + (!busy && z.error ? ' error' : '');
+  $('#lqStatus').innerHTML = z.status === 'processing' ? '⏳ 出題中…（大約一兩分鐘）' : z.status === 'grading' ? '⏳ 批改中…' : '⚠️ ' + esc(z.error || '');
+  $('#lqScore').hidden = !graded;
+  if (graded) { const wrong = z.questions.filter((q) => q.wrong).length; $('#lqScore').innerHTML = `<div class="lbl">得分 ${z.score} / ${z.max}</div><div class="hint left">${wrong ? `${wrong} 題答錯或分數低於六成，已記進錯題本` : '全部答對 🎉'}</div>`; }
+  if (z.status === 'ready' && $('#lqForm').dataset.mode !== 'answer') {
+    let saved = {}; try { saved = JSON.parse(localStorage.getItem(draftKey()) || '{}'); } catch {}
+    $('#lqForm').dataset.mode = 'answer';
+    $('#lqForm').innerHTML = z.questions.map((q, k) => `<div class="qcard"><div class="qh">${k + 1}．${q.typeLabel}（${q.score} 分）</div><div class="qq md">${renderMd(q.q)}</div>` +
+      (q.type === 'choice' ? q.options.map((o, j) => `<label class="opt"><input type="radio" name="q${q.i}" value="${j}"${saved[q.i] === j ? ' checked' : ''}> (${String.fromCharCode(65 + j)}) ${esc(o)}</label>`).join('')
+        : q.type === 'fill' ? Array.from({ length: q.blanks }, (_, j) => `<input type="text" data-fill="${q.i}" placeholder="第 ${j + 1} 個空格" value="${esc((saved[q.i] || [])[j] || '')}">`).join('')
+          : `<textarea data-q="${q.i}" rows="${q.type === 'essay' ? 9 : q.type === 'qa' ? 6 : 3}" placeholder="作答…">${esc(saved[q.i] || '')}</textarea>`) +
+      `<div class="hints" data-h="${q.i}">${(q.hints || []).map((h) => `<div class="hintline">💡 ${esc(h)}</div>`).join('')}</div>` +
+      `<button type="button" class="small hintbtn" data-hint="${q.i}"${(q.hints || []).length >= 2 ? ' hidden' : ''}>💡 給我提示${(q.hints || []).length ? '（再一個）' : ''}</button></div>`).join('');
+  }
+  if (graded && $('#lqForm').dataset.mode !== 'result') {
+    try { localStorage.removeItem(draftKey()); } catch {}
+    $('#lqForm').dataset.mode = 'result';
+    $('#lqForm').innerHTML = z.questions.map((q, k) => `<div class="qcard ${q.wrong ? 'wrong' : 'right'}"><div class="qh">${k + 1}．${q.typeLabel}　${q.wrong ? '❌' : '⭕'} ${q.score} / ${q.max} 分</div>` +
+      `<div class="qq md">${renderMd(q.q)}</div>` + (q.options ? `<div class="hint left">${q.options.map((o, j) => `(${String.fromCharCode(65 + j)}) ${esc(o)}`).join('　')}</div>` : '') +
+      `<div class="res">${q.hints && q.hints.length ? `<div class="hint left">💡 用了 ${q.hints.length} 個提示</div>` : ''}<div>🖊️ 我的答案：${esc(q.mine)}</div><div>✔️ ${q.type === 'choice' || q.type === 'fill' ? '正確答案' : '參考答案'}：${esc(q.key)}</div>` +
+      (q.hit && q.hit.length ? `<div>👍 有寫到：${esc(q.hit.join('；'))}</div>` : '') + (q.miss && q.miss.length ? `<div>⚠️ 漏掉／寫錯：${esc(q.miss.join('；'))}</div>` : '') +
+      (q.feedback && q.feedback !== '答對' ? `<div>💬 ${esc(q.feedback)}</div>` : '') + (q.explanation ? `<div class="hint left">解析：${esc(q.explanation)}</div>` : '') + '</div></div>').join('');
+  }
+  if (z.status === 'processing' || z.status === 'error') { $('#lqForm').innerHTML = ''; $('#lqForm').dataset.mode = ''; }
+  $('#lqSubmit').hidden = z.status !== 'ready';
+  $('#lqNotesBox').hidden = !(z.status === 'ready' || z.status === 'grading' || graded);
+  $('#lqFinish').hidden = !graded;
+  if (busy) lnPoll(() => !$('#lnQuiz').hidden && openQuiz(id), 3000);
+}
+// 💡 hint for one question (the server never sends the answer; at most 2 per question)
+$('#lqForm').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-hint]'); if (!b) return;
+  const i = +b.dataset.hint, q = lqData.questions.find((x) => x.i === i), a = readAnswers()[i];
+  const current = q.type === 'choice' ? (a >= 0 ? q.options[a] : '') : Array.isArray(a) ? a.filter(Boolean).join('、') : a;
+  b.disabled = true; b.textContent = '💡 想提示中…';
+  try {
+    const r = await lnApi(`/${enc(lnTopic)}/quiz/${lnQuizId}/hint`, jbody('POST', { i, current }));
+    q.hints = (q.hints || []).concat([r.hint]);
+    document.querySelector(`#lqForm .hints[data-h="${i}"]`).insertAdjacentHTML('beforeend', `<div class="hintline">💡 ${esc(r.hint)}</div>`);
+    b.hidden = r.left <= 0; b.textContent = '💡 給我提示（再一個）';
+  } catch (err) { toast(err.message, 4000); b.textContent = '💡 給我提示'; }
+  b.disabled = false;
+});
+$('#lqForm').addEventListener('input', () => { if ($('#lqForm').dataset.mode === 'answer') { try { localStorage.setItem(draftKey(), JSON.stringify(readAnswers())); } catch {} } });
+$('#lqSubmit').onclick = async () => {
+  const a = readAnswers();
+  const empty = lqData.questions.filter((q) => (q.type === 'choice' ? a[q.i] < 0 : q.type === 'fill' ? !a[q.i].some((x) => x.trim()) : !String(a[q.i]).trim())).length;
+  if (!confirm(empty ? `還有 ${empty} 題沒作答，確定交卷？` : '確定交卷？')) return;
+  $('#lqSubmit').disabled = true;
+  try { await lnApi(`/${enc(lnTopic)}/quiz/${lnQuizId}/submit`, jbody('POST', { answers: a })); $('#lqForm').dataset.mode = 'submitted'; openQuiz(lnQuizId); } catch (e) { toast(e.message, 4000); }
+  $('#lqSubmit').disabled = false;
+};
+async function saveQuizNotes() { clearTimeout(lqNotesTimer); try { await lnApi(`/${enc(lnTopic)}/quiz/${lnQuizId}/notes`, jbody('PUT', { notes: $('#lqNotes').value })); $('#lqSaved').textContent = '已自動儲存'; } catch { $('#lqSaved').textContent = '⚠️ 沒存到'; } }
+$('#lqNotes').addEventListener('input', () => { $('#lqSaved').textContent = '…'; clearTimeout(lqNotesTimer); lqNotesTimer = setTimeout(saveQuizNotes, 1500); });
+$('#lqFinish').onclick = async () => {
+  await saveQuizNotes();
+  try { const r = await lnApi(`/${enc(lnTopic)}/quiz/${lnQuizId}/finish`, jbody('POST', {})); toast('筆記整理中，好了在「草稿」確認後上傳', 4000); openDraft(r.draft); }
+  catch (e) { toast(e.message, 4000); }
+};
+$('#lqBack').onclick = () => (lnQuizBack === 'lnLesson' ? openLesson(lnLessonN, false) : openTopic(lnTopic));
+if (qs.has('learn')) { const t = qs.get('learn'); history.replaceState(null, '', '/'); show('learn'); openTopic(t); }

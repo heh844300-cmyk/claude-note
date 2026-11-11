@@ -17,6 +17,7 @@
     <button data-tab="drafts">草稿 <span id="draftCount" class="badge" hidden></span></button>
     <button data-tab="notes">已上傳</button>
     <button data-tab="tasks">待辦 <span id="taskCount" class="badge" hidden></span></button>
+    <button data-tab="learn">學習</button>
     <button data-tab="vault">筆記庫</button>
   </nav>
 </header>
@@ -178,6 +179,121 @@
     <div id="tList"></div>
     <p id="tEmpty" class="empty" hidden>目前沒有未完成的待辦 🎉</p>
     <details id="tDone" class="tdone" hidden><summary></summary><div id="tDoneList"></div></details>
+  </section>
+
+  <!-- 學習 -->
+  <section id="tab-learn" class="tab" hidden>
+    <!-- 主題清單 -->
+    <div id="lnList" class="lview">
+      <ul id="lnTopics" class="list"></ul>
+      <p id="lnEmpty" class="empty" hidden>還沒有學習主題</p>
+      <details id="lnNewBox" class="box">
+        <summary><span class="lbl">＋ 新的學習主題</span></summary>
+        <label class="field">主題名稱<input id="lnTitle" type="text" placeholder="例如：資料庫概論、多益、Python"></label>
+        <label class="field">目標與程度（選填）<textarea id="lnGoal" rows="2" placeholder="例如：期末考、大學程度；或：零基礎，想做小專案"></textarea></label>
+        <label class="field">教學要求（選填；上課、出題、批改都會照做）<textarea id="lnRules" rows="2" placeholder="例如：多用生活例子；程式範例用 Python；名詞附英文；題目偏重實務情境"></textarea></label>
+        <label class="field">考試日期（選填，填了會排讀書計畫並每天推播）<input id="lnExam" type="date"></label>
+        <label class="field">每天推播時間<input id="lnPlanTime" type="time" value="08:00"></label>
+        <button type="button" id="lnCreate" class="primary">建立</button>
+        <p class="hint left">建立後可以上傳教材（課本、講義、考古題）。有教材時大綱照教材排；沒有的話 AI 會先上網查證再排大綱。</p>
+      </details>
+    </div>
+
+    <!-- 一個主題 -->
+    <div id="lnTopic" class="lview" hidden>
+      <button class="back" type="button" data-lback="lnList">← 學習</button>
+      <h2 id="ltTitle"></h2>
+      <p id="ltMeta" class="hint left"></p>
+      <div id="ltToday" class="box group" hidden></div>
+      <div class="row gap lt-actions">
+        <button type="button" id="ltQuizBtn" class="primary">📝 應考出題</button>
+        <button type="button" id="ltWrongBtn">📕 錯題本</button>
+        <button type="button" id="ltOutlineBtn">📄 大綱</button>
+      </div>
+      <div class="box">
+        <div class="row"><span class="lbl">章節</span><span id="ltOutlineState" class="hint"></span></div>
+        <ul id="ltChapters" class="chapters"></ul>
+        <button type="button" id="ltGenOutline">產生大綱</button>
+      </div>
+      <details class="box" id="ltMatBox">
+        <summary><span class="lbl">📎 教材</span> <span id="ltMatCount" class="hint"></span></summary>
+        <ul id="ltMats" class="mats"></ul>
+        <div class="row gap">
+          <select id="ltMatKind"><option value="notes">課本／講義</option><option value="past">考古題</option></select>
+          <label class="pick">選檔案<input type="file" id="ltMatFile" multiple accept=".txt,.md,.html,.htm,.pdf,image/*"></label>
+        </div>
+        <p id="ltMatHint" class="hint left"></p>
+      </details>
+      <details class="box nokiosk" id="ltSetBox">
+        <summary><span class="lbl">⚙️ 設定</span></summary>
+        <label class="field">目標與程度<textarea id="ltGoal" rows="2"></textarea></label>
+        <label class="field">教學要求（上課、追問、出題、批改都會照做；已經準備好的章節要按「重新準備這章」才會套用）<textarea id="ltRules" rows="3" placeholder="例如：多用生活例子；程式範例用 Python；題目偏重實務情境"></textarea></label>
+        <label class="field">考試日期<input id="ltExam" type="date"></label>
+        <label class="field">每天推播時間<input id="ltPlanTime" type="time"></label>
+        <div class="row gap"><button type="button" id="ltSave" class="primary">儲存</button><button type="button" id="ltDelete" class="danger">刪除主題</button></div>
+      </details>
+    </div>
+
+    <!-- 上課 -->
+    <div id="lnLesson" class="lview" hidden>
+      <button class="back" type="button" data-lback="lnTopic">← 章節</button>
+      <h2 id="llTitle"></h2>
+      <div id="llStatus" class="status" hidden></div>
+      <article id="llBody" class="md"></article>
+      <div id="llChat"></div>
+      <p id="llLevel" class="hint left" hidden></p>
+      <div class="revise" id="llAskRow" hidden>
+        <textarea id="llAsk" rows="2" placeholder="有不懂的地方嗎？直接問；也可以在這裡回答老師的 🤔 小問題"></textarea>
+        <button type="button" id="llAskBtn">發問</button>
+      </div>
+      <div class="box notesbox">
+        <div class="row"><span class="lbl">✏️ 我的筆記</span><span id="llSaved" class="hint"></span></div>
+        <textarea id="llNotes" rows="6" placeholder="邊學邊記；這一章結束時會連同教學重點整理成筆記，放進 Claude Note"></textarea>
+      </div>
+      <div class="row gap lt-actions">
+        <button type="button" id="llQuizBtn">📝 這章小測驗</button>
+        <button type="button" id="llRedo">重新準備這章</button>
+      </div>
+      <button type="button" id="llFinish" class="primary wide">✅ 完成這章並整理筆記</button>
+    </div>
+
+    <!-- 出題設定 -->
+    <div id="lnQuizCfg" class="lview" hidden>
+      <button class="back" type="button" data-lback="lnTopic">← 章節</button>
+      <h2>應考出題</h2>
+      <div class="box">
+        <div class="lbl">題型與題數</div>
+        <div id="qcTypes" class="qtypes"></div>
+      </div>
+      <div class="box">
+        <label class="field">這次的出題要求（選填；批改時也會照這個標準）<textarea id="qcRules" rows="3" placeholder="例如：題目要有情境；申論題要能分點作答；選擇題要考容易混淆的地方；照老師上課強調的重點出"></textarea></label>
+        <label class="field">難度<select id="qcDiff"><option value="auto" selected>🎯 自動（依你每章的表現）</option><option value="1">Lv.1 基礎建立</option><option value="2">Lv.2 標準入門</option><option value="3">Lv.3 概念應用</option><option value="4">Lv.4 進階變形</option><option value="5">Lv.5 大師挑戰</option></select></label>
+        <label class="check"><input type="checkbox" id="qcMimic"> 仿照考古題的風格出題</label>
+        <label class="check"><input type="checkbox" id="qcWrong"> 只練錯題（出類似但換個角度的題目）</label>
+        <p id="qcHint" class="hint left"></p>
+      </div>
+      <div class="box">
+        <div class="row"><span class="lbl">範圍</span><button type="button" id="qcAll" class="small">全選／全不選</button></div>
+        <div id="qcScope" class="scope"></div>
+        <p class="hint left">都不勾＝全部章節。</p>
+      </div>
+      <button type="button" id="qcGo" class="primary wide">出題</button>
+    </div>
+
+    <!-- 作答／結果 -->
+    <div id="lnQuiz" class="lview" hidden>
+      <button class="back" type="button" id="lqBack">← 返回</button>
+      <h2 id="lqTitle"></h2>
+      <div id="lqStatus" class="status" hidden></div>
+      <div id="lqScore" class="box group" hidden></div>
+      <form id="lqForm"></form>
+      <button type="button" id="lqSubmit" class="primary wide" hidden>交卷</button>
+      <div class="box notesbox" id="lqNotesBox" hidden>
+        <div class="row"><span class="lbl">✏️ 我的筆記</span><span id="lqSaved" class="hint"></span></div>
+        <textarea id="lqNotes" rows="5" placeholder="記下這次搞懂或搞錯的地方"></textarea>
+      </div>
+      <button type="button" id="lqFinish" class="primary wide" hidden>整理成筆記放進 Claude Note</button>
+    </div>
   </section>
 
   <!-- 整個筆記庫（唯讀） -->

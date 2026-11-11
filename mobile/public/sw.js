@@ -1,5 +1,5 @@
 ﻿// Service worker: app shell cache + push notifications.
-const CACHE = 'claude-note-v18';
+const CACHE = 'claude-note-v24';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {
@@ -23,10 +23,10 @@ self.addEventListener('push', (e) => {
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
   const url = new URL((e.notification.data && e.notification.data.url) || '/', self.location.origin);
-  const note = url.searchParams.get('note');
+  const note = url.searchParams.get('note'), learn = url.searchParams.get('learn');
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
     const w = wins.find((c) => new URL(c.url).origin === self.location.origin);
-    if (w) { if (note) w.postMessage({ openNote: note }); return w.focus(); }
+    if (w) { if (note) w.postMessage({ openNote: note }); if (learn) w.postMessage({ openLearn: learn }); return w.focus(); }
     return self.clients.openWindow(url.href);
   }));
 });
