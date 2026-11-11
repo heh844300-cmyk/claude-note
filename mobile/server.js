@@ -381,7 +381,7 @@ async function doOrganize(d) {
   if (d.learn) {                                   // notes from a lesson / quiz: one note, into the topic folder
     const t = { title: d.learn.topicTitle };
     const ch = d.learn.chapter ? { n: d.learn.chapter, title: d.learn.chapterTitle } : null;
-    applyClaude(d, await askClaude(d, instructions + HEADER_RULES(d) + learn.LEARN_RULES(t, ch) + (ctx ? RELATED_RULES + ctx : '') + material(d)), false);
+    applyClaude(d, await askClaude(d, instructions + HEADER_RULES(d) + learn.LEARN_RULES(t, ch, { supplement: d.learn.supplement }) + (ctx ? RELATED_RULES + ctx : '') + material(d)), false);
     Object.assign(d, { title: d.learn.title, expires: null, reminders: [], agent: false, series: null });
     return;
   }
@@ -984,7 +984,11 @@ async function startSupplement(id, n) {
       const prompt = outline.supplementPrompt(t, c, { lesson: l && l.content, web, materialsText: docs.length ? learn.pickPassages(docs, c.title + ' ' + c.fresh.join(' '), 12000) : '' });
       const out = String(web ? await ai.research({ prompt, model: CFG.agentModel, cwd: AGENT_CWD, timeoutMs: CFG.agentTimeoutMs }) : await ai.plain({ prompt, model: CFG.bigModel, timeoutMs: CFG.agentTimeoutMs })).trim();
       if (!out) throw new Error('AI 沒有產生內容');
-      await updateLesson(id, c.n, (x) => { x.content = String(x.content || '').trim() + `\n\n---\n\n## 🆕 補充：新教材的內容（${today()}）\n\n` + out; x.supp = { status: 'ready', error: '', at: new Date().toISOString() }; });
+      // the chapter already has a note: the supplement becomes a draft that is appended to it (reviewed and uploaded like any learning note)
+      const t2 = await loadTopic(id), c2 = t2.chapters.find((x) => x.n === c.n) || c;
+      const hasNote = !!(c2.note && fs.existsSync(path.join(topicDir(id), c2.note)));
+      const draft = hasNote ? await learnDraft(t2, { chapter: c2, title: chapterNoteTitle(id, c2), text: learn.supplementMaterial(t2, c2, { points: c.fresh, content: out }), supplement: true }) : null;
+      await updateLesson(id, c.n, (x) => { x.content = String(x.content || '').trim() + `\n\n---\n${learn.SUPP_MARK}新教材的內容（${today()}）\n\n` + out; x.supp = { status: 'ready', error: '', at: new Date().toISOString(), draft: draft ? draft.id : null, note: hasNote ? chapterNoteTitle(id, c2) : null }; });
       await clearFresh(id, c.n, c.fresh);
     } catch (e) { await updateLesson(id, c.n, (x) => { x.supp = { status: 'error', error: e.message.slice(0, 300) }; }); throw e; }
   });
@@ -1120,12 +1124,12 @@ async function submitQuiz(id, qid, answersIn) {
 }
 
 // ---- notes -> the normal organize flow (a draft the user checks), destination: the topic folder ----
-async function learnDraft(t, { chapter, text, title }) {
+async function learnDraft(t, { chapter, text, title, supplement }) {
   const id = new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + crypto.randomBytes(5).toString('hex');
   await fsp.mkdir(draftDir(id), { recursive: true });
   const d = { id, createdAt: new Date().toISOString(), status: 'processing', stage: '排隊中…', error: '', text, images: [], audios: [], audioNames: [], transcript: null,
     title: '', tags: [], body: '', expires: null, reminders: [], agent: false, model: CFG.bigModel, source: 'learn', seriesPick: '-',
-    learn: { topic: t.id, title: learn.safeName(title, 60), chapter: chapter ? chapter.n : null, topicTitle: t.title, chapterTitle: chapter ? chapter.title : null } };
+    learn: { topic: t.id, title: learn.safeName(title, 60), chapter: chapter ? chapter.n : null, topicTitle: t.title, chapterTitle: chapter ? chapter.title : null, supplement: !!supplement } };
   await saveDraft(d);
   enqueue(id, 'organize');
   return d;
@@ -2157,7 +2161,8 @@ async function route(req, res) {
       if (tid && p[4] === 'lesson' && p[5]) {
         const n = +p[5];
         if (!p[6] && M === 'GET') { const t = await loadTopic(tid); const c = chapterOf(t, n); const l = await loadLesson(tid, n);
-          return send(res, 200, { chapter: c, pos: learn.posOf(t.chapters, n), level: learn.chapterLevel(t, n), lesson: l, threads: learn.threadsOf(l && l.chat), pending: learn.pendingQuestion(l && l.chat) }); }
+          const suppDraft = !!(l && l.supp && l.supp.draft && fs.existsSync(draftDir(l.supp.draft)));   // still waiting in 草稿
+          return send(res, 200, { chapter: c, pos: learn.posOf(t.chapters, n), suppDraft, level: learn.chapterLevel(t, n), lesson: l, threads: learn.threadsOf(l && l.chat), pending: learn.pendingQuestion(l && l.chat) }); }
         if (!p[6] && M === 'POST') { await startLesson(tid, n); return send(res, 202, { ok: true }); }
         if (p[6] === 'supplement' && M === 'POST') { await startSupplement(tid, n); return send(res, 202, { ok: true }); }
         if (p[6] === 'ask' && M === 'POST') {

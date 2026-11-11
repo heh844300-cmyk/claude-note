@@ -179,3 +179,12 @@ assert(autoP.includes('先判斷') && autoP.includes('「外鍵指向哪裡？�
 assert(L.noteTitle({ n: 3, title: '網路初探：拓撲與元件' }) === '網路初探：拓撲與元件' && L.noteTitle({ n: 2, title: ' ' }) === '未命名章節', 'note title = chapter subject only, never a chapter number');
 const lr = L.LEARN_RULES(topic, { n: 3, title: '網路初探' }), nm = L.notesMaterial(topic, { chapter: { n: 3, title: '網路初探' }, notes: 'x' });
 assert(!/第 ?3 ?章/.test(lr) && !/第 ?3 ?章/.test(nm) && lr.includes('不要寫「第幾章」') && lr.includes('「網路初探」'), 'organizer told not to write chapter numbers; material has none');
+
+// supplementary lessons: kept when the lesson is cut to fit, and a supplement-only note appended to the chapter's note
+const longLesson = '### 本文\n' + 'x'.repeat(9000) + '\n\n---\n' + L.SUPP_MARK + '新教材的內容（2026-11-11）\n\n### 網路拓撲\n星狀拓撲';
+const snm = L.notesMaterial(topic, { chapter: chs[0], notes: "", lesson: longLesson });
+assert(snm.includes("## 🆕 補充：新教材的內容") && snm.includes("星狀拓撲") && snm.length < 9000, 'a long lesson is cut, its supplement at the end is kept');
+assert(L.notesMaterial(topic, { chapter: chs[0], lesson: 'y'.repeat(9000) }).includes('y'.repeat(8000)) && !L.notesMaterial(topic, { chapter: chs[0], lesson: 'y'.repeat(9000) }).includes('y'.repeat(8001)), 'no supplement: the lesson keeps its usual budget');
+const sm = L.supplementMaterial(topic, chs[0], { points: ['網路拓撲'], content: '### 網路拓撲\n星狀' });
+assert(sm.includes('【學習筆記・補充】') && sm.includes('- 網路拓撲') && sm.includes('星狀'), 'supplement material: the new points and the supplementary lesson');
+assert(L.LEARN_RULES(topic, chs[0], { supplement: true }).includes('只整理「補充」') && L.LEARN_RULES(topic, chs[0], { supplement: true }).includes('不要連回那篇筆記') && !L.LEARN_RULES(topic, chs[0]).includes('只整理「補充」'), 'supplement-only rule only for supplement drafts');

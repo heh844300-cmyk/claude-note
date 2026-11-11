@@ -1089,8 +1089,10 @@ async function openLesson(n, start = true) {
   $('#llQuizBtn').disabled = $('#llFinish').disabled = !ready;
   $('#llRedo').disabled = busy;
   const fresh = c.fresh || [], sp = l && l.supp, spBusy = !!(sp && sp.status === 'processing');
-  $('#llSupp').hidden = !ready || !(fresh.length || spBusy);
+  const spDone = !!(sp && sp.status === 'ready' && !fresh.length && (r.suppDraft || !sp.note));
+  $('#llSupp').hidden = !ready || !(fresh.length || spBusy || spDone);
   $('#llSupp').innerHTML = spBusy ? '⏳ 正在補上新教材的內容，完成後會接在教學內容的最後面…'
+    : spDone ? (sp.note ? `✅ 補充的內容已經整理成草稿，到「草稿」確認後會接在「${esc(sp.note)}」筆記的後面。` : '✅ 已補上新教材的內容。這一章還沒整理成筆記，按「完成這章並整理筆記」時會包含補充的內容。')
     : `<div>🆕 新教材補充了這些重點：${esc(fresh.join('、'))}</div>` + (sp && sp.status === 'error' ? `<div class="hint left">⚠️ 上次補充失敗：${esc(sp.error || '')}</div>` : '') +
       (isKiosk() ? '' : '<button type="button" id="llSuppBtn">補上新內容</button>');
   const sb = $('#llSuppBtn'); if (sb) sb.onclick = async () => {

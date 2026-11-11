@@ -421,15 +421,21 @@ ${items.map((x) => `===== 第 ${x.q.i} 題（${TYPES[x.q.type]}，滿分 ${x.q.s
 `;
 }
 // the user's notes (+ what was taught / how the quiz went) -> text for the normal organize flow
+// heading that starts each supplementary lesson appended to a lesson's content (server.startSupplement)
+const SUPP_MARK = '\n## 🆕 補充：';
+// material for a note made from one supplementary lesson only (appended to the chapter's existing note)
+function supplementMaterial(t, chapter, { points, content }) {
+  return `【學習筆記・補充】主題：${t.title}　單元「${chapter.title}」\n\n===== 新教材補充的重點 =====\n${(points || []).map((p) => '- ' + p).join('\n')}\n\n===== 補充教學（老師講的內容）=====\n${String(content || '').slice(0, 10000)}\n`;
+}
 function notesMaterial(t, { chapter, notes, lesson, chat, quiz }) {
   let s = `【學習筆記】主題：${t.title}` + (chapter ? `　單元「${chapter.title}」` : '') + '\n\n';
   s += '===== 我的筆記 =====\n' + (String(notes || '').trim() || '（這次沒有寫筆記）') + '\n';
-  if (lesson) s += '\n===== 這一章的教學重點（老師講的內容，供整理參考）=====\n' + String(lesson).slice(0, 8000) + '\n';
+  if (lesson) { const [main, ...supp] = String(lesson).split(SUPP_MARK); s += '\n===== 這一章的教學重點（老師講的內容，供整理參考）=====\n' + main.slice(0, supp.length ? 6000 : 8000) + supp.map((x) => SUPP_MARK + x.slice(0, 3000)).join('') + '\n'; }
   if (chat && chat.length) s += '\n===== 我問的問題 =====\n' + chat.map((m) => `問：${m.q}\n答：${String(m.a).slice(0, 1200)}`).join('\n\n') + '\n';
   if (quiz) s += '\n===== 測驗結果 =====\n' + quiz + '\n';
   return s;
 }
-const LEARN_RULES = (t, chapter) => `
+const LEARN_RULES = (t, chapter, { supplement } = {}) => `
 
 ===== 學習筆記的整理規則 =====
 這次的內容是使用者學習「${t.title}」${chapter ? `的「${chapter.title}」` : '時做的測驗'}時寫的筆記。
@@ -439,7 +445,7 @@ const LEARN_RULES = (t, chapter) => `
 - 測驗答錯的地方整理成「待加強」的重點（不要寫成待辦事項）。
 - 待辦事項只列真的需要做的事（例如「重做第 3 題」不要列），通常可以沒有。
 - 不要拆成多篇筆記。EXPIRES 一律 never，REMIND 寫 none，AGENT 寫 no。
-`;
+${supplement ? `- 這次只整理「補充」：使用者已經有「${chapter ? chapter.title : t.title}」的筆記，後來的教材補充了一些內容（附在下面），整理好的內容會直接接在那篇筆記的後面（系統會加上「補充」小標題），所以開頭不要寫「本篇是…的補充」這類說明，也不要連回那篇筆記。只寫補充的部分，不要重寫或重複原本已經學過的內容；沒有使用者自己的筆記是正常的，以補充教學為主體。教材和原本說法不同的地方，寫清楚兩邊的差異和哪一個正確。\n` : ''}`;
 
 // ---------- review of a learning-note draft before upload: find factual / conceptual errors ----------
 const REVIEW_LEVELS = ['錯誤', '不精確', '待查'];
@@ -514,4 +520,4 @@ function applyFixes(body, items) {
 
 module.exports = { TYPES, DEFAULT_SCORE, OBJECTIVE, DATA_NOTE, safeName, parseOutline, computePlan, planLine, chapterLabel, posOf, aiChapter, noteTitle, parseQuestions, choiceIndex,
   publicQuestions, normAnswer, gradeObjective, parseGrades, isWrong, answerText, correctText, renderOutline, renderWrongBook, chunks, pickPassages,
-  outlinePrompt, lessonPrompt, followupPrompt, pendingQuestion, threadsOf, quizPrompt, gradePrompt, hintPrompt, hintLeaks, rulesBlock, LEVELS, START, stepLevel, levelOf, chapterLevel, parseJudge, notesMaterial, LEARN_RULES, reviewPrompt, parseReview, applyFixes, findQuote, REVIEW_LEVELS, localDate, addDays, daysBetween, wd };
+  outlinePrompt, lessonPrompt, followupPrompt, pendingQuestion, threadsOf, quizPrompt, gradePrompt, hintPrompt, hintLeaks, rulesBlock, LEVELS, START, stepLevel, levelOf, chapterLevel, parseJudge, notesMaterial, supplementMaterial, SUPP_MARK, LEARN_RULES, reviewPrompt, parseReview, applyFixes, findQuote, REVIEW_LEVELS, localDate, addDays, daysBetween, wd };
