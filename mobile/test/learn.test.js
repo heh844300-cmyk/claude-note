@@ -163,3 +163,8 @@ const ansP = L.followupPrompt(rt, chs[0], '', tc, '它指向另一張表的主�
 assert(ansP.includes('一定要判斷對錯') && ansP.includes('「外鍵指向哪裡？」') && ansP.includes('JUDGE: correct') && ansP.includes('JUDGE: wrong') && !ansP.includes('JUDGE: none'), 'mode answer: judged against the pending small question');
 const autoP = L.followupPrompt(rt, chs[0], '', tc, 'x', { level: 2, sc: 0, sw: 0 });
 assert(autoP.includes('先判斷') && autoP.includes('「外鍵指向哪裡？」') && autoP.includes('JUDGE: none'), 'mode auto: the AI decides, told which small question is pending');
+
+// notes saved into the vault: named after the subject, no chapter numbers
+assert(L.noteTitle({ n: 3, title: '網路初探：拓撲與元件' }) === '網路初探：拓撲與元件' && L.noteTitle({ n: 2, title: ' ' }) === '第2章  ', 'note title = chapter subject only (number only as a last resort)');
+const lr = L.LEARN_RULES(topic, { n: 3, title: '網路初探' }), nm = L.notesMaterial(topic, { chapter: { n: 3, title: '網路初探' }, notes: 'x' });
+assert(!/第 ?3 ?章/.test(lr) && !/第 ?3 ?章/.test(nm) && lr.includes('不要寫「第幾章」') && lr.includes('「網路初探」'), 'organizer told not to write chapter numbers; material has none');

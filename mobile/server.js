@@ -1003,6 +1003,8 @@ async function learnDraft(t, { chapter, text, title }) {
   return d;
 }
 // ---- review of a learning-note draft before upload ----
+// the note a chapter's notes go into: the one already linked to the chapter (even if the user renamed it), else the chapter's subject
+const chapterNoteTitle = (tid, c) => (c.note && fs.existsSync(path.join(topicDir(tid), c.note)) ? c.note.replace(/\.md$/i, '') : learn.noteTitle(c));
 // kept in its own file (review.json in the draft folder) so it never races the user's draft saves, and run on its own
 // queue: a 1–3 minute web check must not hold up lessons (learnChain) or wait behind a 25-minute Agent job
 const reviewFile = (id) => path.join(draftDir(id), 'review.json');
@@ -2036,7 +2038,7 @@ async function route(req, res) {
           await updateTopic(tid, (x) => { const y = chapterOf(x, n); y.status = 'done'; y.doneAt = new Date().toISOString(); x.updated = new Date().toISOString(); });
           const b = await readJson(req).catch(() => ({}));
           if (b.notes === false) return send(res, 200, { ok: true });
-          const d = await learnDraft(t, { chapter: c, title: learn.chapterLabel(c), text: learn.notesMaterial(t, { chapter: c, notes: l.notes, lesson: l.content, chat: l.chat, quiz: quizText }) });
+          const d = await learnDraft(t, { chapter: c, title: chapterNoteTitle(tid, c), text: learn.notesMaterial(t, { chapter: c, notes: l.notes, lesson: l.content, chat: l.chat, quiz: quizText }) });
           return send(res, 200, { ok: true, draft: d.id });
         }
       }
@@ -2069,7 +2071,7 @@ async function route(req, res) {
           if (z.status !== 'graded') throw httpErr(409, '請先交卷');
           const res2 = `${z.label}：得分 ${z.score} / ${z.max}\n` + z.questions.map((q) => `- ${learn.isWrong(q, z.grades[q.i]) ? '❌' : '⭕'}（${learn.TYPES[q.type]}）${q.q}\n  - 我的答案：${learn.answerText(q, z.answers[q.i])}\n  - 正確答案：${learn.correctText(q)}` +
             (z.grades[q.i].feedback ? `\n  - 批改：${z.grades[q.i].feedback}` : '')).join('\n');
-          const d = await learnDraft(t, { chapter: z.chapter ? chapterOf(t, z.chapter) : null, title: z.chapter ? learn.chapterLabel(chapterOf(t, z.chapter)) : `測驗 ${localISO(new Date(z.at)).slice(0, 10)} ${z.label}`, text: learn.notesMaterial(t, { notes: z.notes, quiz: res2 }) });
+          const d = await learnDraft(t, { chapter: z.chapter ? chapterOf(t, z.chapter) : null, title: z.chapter ? chapterNoteTitle(tid, chapterOf(t, z.chapter)) : `測驗 ${localISO(new Date(z.at)).slice(0, 10)} ${z.label}`, text: learn.notesMaterial(t, { notes: z.notes, quiz: res2 }) });
           return send(res, 200, { ok: true, draft: d.id });
         }
       }

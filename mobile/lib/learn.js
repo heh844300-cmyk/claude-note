@@ -71,6 +71,8 @@ function computePlan({ chapters, examDate, today }) {
   return { days, examDate };
 }
 const chapterLabel = (c) => `第${c.n}章 ${c.title}`;
+// the note saved into the vault is named after the chapter's subject only — no "第N章", so it still reads well later
+const noteTitle = (c) => String(c.title || '').trim() || chapterLabel(c);
 function planLine(day, chapters) {
   const byN = (n) => chapters.find((c) => c.n === n);
   if (day.kind === 'exam') return '考試日';
@@ -419,7 +421,7 @@ ${items.map((x) => `===== 第 ${x.q.i} 題（${TYPES[x.q.type]}，滿分 ${x.q.s
 }
 // the user's notes (+ what was taught / how the quiz went) -> text for the normal organize flow
 function notesMaterial(t, { chapter, notes, lesson, chat, quiz }) {
-  let s = `【學習筆記】主題：${t.title}` + (chapter ? `　第 ${chapter.n} 章「${chapter.title}」` : '') + '\n\n';
+  let s = `【學習筆記】主題：${t.title}` + (chapter ? `　單元「${chapter.title}」` : '') + '\n\n';
   s += '===== 我的筆記 =====\n' + (String(notes || '').trim() || '（這次沒有寫筆記）') + '\n';
   if (lesson) s += '\n===== 這一章的教學重點（老師講的內容，供整理參考）=====\n' + String(lesson).slice(0, 8000) + '\n';
   if (chat && chat.length) s += '\n===== 我問的問題 =====\n' + chat.map((m) => `問：${m.q}\n答：${String(m.a).slice(0, 1200)}`).join('\n\n') + '\n';
@@ -429,7 +431,8 @@ function notesMaterial(t, { chapter, notes, lesson, chat, quiz }) {
 const LEARN_RULES = (t, chapter) => `
 
 ===== 學習筆記的整理規則 =====
-這次的內容是使用者學習「${t.title}」${chapter ? `第 ${chapter.n} 章「${chapter.title}」` : '時做的測驗'}時寫的筆記。
+這次的內容是使用者學習「${t.title}」${chapter ? `的「${chapter.title}」` : '時做的測驗'}時寫的筆記。
+- 筆記裡不要寫「第幾章」「本章」「這一章」這類章節編號或順序（使用者之後會跨章節回頭看），直接用主題名稱稱呼，例如「${chapter ? chapter.title : t.title}」；教學內容裡提到「第 N 章」的地方也改成對應的主題名稱。
 - 「我的筆記」是使用者自己寫的，是這篇筆記的主體：重點整理以它為主，保留他的說法和理解；教學重點和問答只用來補充、更正和組織。
 - 使用者筆記裡寫錯的觀念，在「思路脈絡」的「矛盾或未想清楚之處」溫和地指出並附正確說法。
 - 測驗答錯的地方整理成「待加強」的重點（不要寫成待辦事項）。
@@ -508,6 +511,6 @@ function applyFixes(body, items) {
   return { body: out, applied };
 }
 
-module.exports = { TYPES, DEFAULT_SCORE, OBJECTIVE, safeName, parseOutline, mergeOutline, computePlan, planLine, chapterLabel, parseQuestions, choiceIndex,
+module.exports = { TYPES, DEFAULT_SCORE, OBJECTIVE, safeName, parseOutline, mergeOutline, computePlan, planLine, chapterLabel, noteTitle, parseQuestions, choiceIndex,
   publicQuestions, normAnswer, gradeObjective, parseGrades, isWrong, answerText, correctText, renderOutline, renderWrongBook, chunks, pickPassages,
   outlinePrompt, lessonPrompt, followupPrompt, pendingQuestion, threadsOf, quizPrompt, gradePrompt, hintPrompt, hintLeaks, rulesBlock, LEVELS, START, stepLevel, levelOf, chapterLevel, parseJudge, notesMaterial, LEARN_RULES, reviewPrompt, parseReview, applyFixes, findQuote, REVIEW_LEVELS, localDate, addDays, daysBetween, wd };
