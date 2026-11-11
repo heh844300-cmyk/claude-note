@@ -27,6 +27,12 @@ assert(!bad.multi && bad.note.title === '唯一' && !/=== NOTE ===|OVERVIEW/.tes
 // cap
 const many = S.parseMulti('OVERVIEW: x\n' + Array.from({ length: 9 }, (_, i) => '=== NOTE ===\n' + note('主題' + i)).join('\n'), parseNote);
 assert(many.multi && many.notes.length === S.MAX_TOPICS, 'capped at ' + S.MAX_TOPICS + ' topics');
+const lastN = many.notes[many.notes.length - 1];
+assert(['主題6', '主題7', '主題8'].every((t) => lastN.body.includes('## ' + t)) && !/^## 摘要/m.test(lastN.body.split('## 主題6')[1]), 'topics over the cap are kept in the last note (their headings demoted), not dropped');
+const ten = S.parseMulti('OVERVIEW: x\n' + Array.from({ length: 9 }, (_, i) => '=== NOTE ===\n' + note('主題' + i)).join('\n'), parseNote, 10);
+assert(ten.notes.length === 9, 'a higher maxTopics keeps every topic as its own note');
+assert(S.clampMax(10, 6, 2, 20) === 10 && S.clampMax('abc', 6, 2, 20) === 6 && S.clampMax(1, 6, 2, 20) === 6 && S.clampMax(99, 6, 2, 20) === 20, 'config limits clamped');
+assert(S.termsPrompt('x', 9).includes('最多 9 個') && S.validTerms(Array.from({ length: 8 }, (_, i) => ({ title: 't' + i, body: 'b' + i })), 'b0b1b2b3b4b5b6b7', 7).length === 7, 'maxTerms used by the term prompt and filter');
 
 // overview
 assert(S.summaryOf('## 摘要\n第一句話。第二句。\n\n## 重點\nx') === '第一句話。', 'summary = first sentence of 摘要');

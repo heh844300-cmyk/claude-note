@@ -67,6 +67,8 @@ const CFG = {
   updateCheckHours: 6,                            // check GitHub for a newer version this often, push once per new version (0 = off)
   dedupEveryDays: 7,                            // scan for duplicate research notes / gray links this often (0 = only by button)
   termSplit: true,                                // after upload, move substantive term explanations into 研究/ notes
+  maxTopics: 6,                                   // one input with unrelated topics -> at most this many notes (2–20); extra topics go into the last one
+  maxTerms: 5,                                    // term explanations moved into 研究/ per note (1–20)
   vaultExclude: [],                               // vault folders hidden from the web app's vault browser, e.g. ["私人", "日記/2025"]
   bigTextChars: 1500,
   lateReminderMs: 6 * 3600 * 1000, // reminders missed while the PC was off: still send if within 6h
@@ -75,6 +77,8 @@ const CFG = {
 const CONFIG_FILE = process.env.CN_CONFIG || path.join(ROOT, 'config.json');
 try { Object.assign(CFG, JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8').replace(/^﻿/, ''))); }
 catch (e) { if (fs.existsSync(CONFIG_FILE)) { console.error('config.json 格式錯誤：' + e.message); process.exit(1); } }
+CFG.maxTopics = split.clampMax(CFG.maxTopics, split.MAX_TOPICS, 2, 20);
+CFG.maxTerms = split.clampMax(CFG.maxTerms, split.MAX_TERMS, 1, 20);
 if (process.env.CN_DUMP_CFG) { console.log(JSON.stringify(CFG, null, 1)); process.exit(0); }
 if (!CFG.vault || !fs.existsSync(CFG.vault)) {
   console.error('沒有設定 Obsidian 筆記庫（config.json 的 "vault"），或資料夾不存在：' + (CFG.vault || '(空白)') + '\n請先執行安裝精靈 setup.cmd。');
@@ -330,9 +334,9 @@ async function askClaude(d, payload, src = d) {
 }
 
 // one input with several unrelated topics -> several notes (organize only, never revise)
-const MULTI_RULES = `
+const MULTI_RULES = () => `
 ===== 多主題（只在第一次整理時適用） =====
-如果原文包含兩個以上「彼此不相關」的主題（例如報稅、旅遊規劃、學程式），請拆成多篇筆記，最多 ${split.MAX_TOPICS} 篇；同一個主題底下的子項目、不同面向，不要拆。
+如果原文包含兩個以上「彼此不相關」的主題（例如報稅、旅遊規劃、學程式），請拆成多篇筆記，最多 ${CFG.maxTopics} 篇；同一個主題底下的子項目、不同面向，不要拆。
 拆的時候：第一行輸出 OVERVIEW: <整體標題，20 字內>，接著每一篇都以單獨一行 === NOTE === 開頭，後面是那一篇完整的標頭（TITLE、TAGS、EXPIRES、REMIND、AGENT）、空行、正文（章節同上）。每篇只放跟它有關的內容、提醒與待辦。
 只有一個主題時，完全照原本格式輸出，不要寫 OVERVIEW，也不要寫 === NOTE ===。
 `;
@@ -382,7 +386,7 @@ async function doOrganize(d) {
   const fixed = d.seriesPick && d.seriesPick !== '-' ? findSeries(d.seriesPick) : null;
   const offered = d.seriesPick === '-' ? [] : fixed ? [fixed] : seriesList().slice(0, 4);
   const sblock = seriesBlock(offered, fixed);
-  const r = split.parseMulti(await askAI(d, instructions + HEADER_RULES(d) + (fixed ? '' : MULTI_RULES) + (ctx ? RELATED_RULES + ctx : '') + sblock + material(d)), parseNote);
+  const r = split.parseMulti(await askAI(d, instructions + HEADER_RULES(d) + (fixed ? '' : MULTI_RULES()) + (ctx ? RELATED_RULES + ctx : '') + sblock + material(d)), parseNote, CFG.maxTopics);
   if (!r.multi) { applyClaude(d, r.note, false); applySeries(d, fixed ? fixed.note : offered.length ? r.note.series : null); return; }
   // several topics: this draft becomes the overview (keeps photos / raw text / transcript); one new draft per topic
   const topics = [];
@@ -1327,9 +1331,9 @@ async function runTerms(job) {
   const region = md0.slice(start, end);
   const finish = (n) => { job.status = 'done'; job.counts = { terms: n }; job.finishedAt = new Date().toISOString(); agentStore.save(); };
   if (!region.trim()) return finish(0);
-  const out = await ai.plain({ prompt: split.termsPrompt(region), model: CFG.smallModel, timeoutMs: CFG.librarianTimeoutMs });
+  const out = await ai.plain({ prompt: split.termsPrompt(region, CFG.maxTerms), model: CFG.smallModel, timeoutMs: CFG.librarianTimeoutMs });
   await fsp.writeFile(path.join(AGENT_CWD, job.id + '.md'), utf8NoBom(out)).catch(() => {});
-  const units = split.validTerms(library.parseResearch('=== MAIN ===\n\n' + out.replace(/\r/g, '')).units, region);
+  const units = split.validTerms(library.parseResearch('=== MAIN ===\n\n' + out.replace(/\r/g, '')).units, region, CFG.maxTerms);
   if (!units.length) { log('terms: none in', job.note); return finish(0); }
   // where each term goes: existing note (link / append) or a new research note — same librarian as the Agent
   const plan = await runLibrarian(units, file);

@@ -1,6 +1,6 @@
 # Claude 筆記（Claude Note）
 
-![Version](https://img.shields.io/badge/version-V22.5-5b4bdb)
+![Version](https://img.shields.io/badge/version-V22.6-5b4bdb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/npm%20dependencies-0-brightgreen)
@@ -50,8 +50,8 @@ AI 可以選 **Claude 訂閱**、**ChatGPT 訂閱（Codex CLI）**，或任何 *
 |---|---|
 | **AI 整理草稿** | 文字、照片（白板、手寫、截圖），或從手機「分享」進來的內容，整理成摘要、重點、思路脈絡、待辦、待釐清問題 |
 | **參考既有筆記** | 整理和查資料前，先從筆記庫找出相關的筆記當前提，不會重複問已經寫過的事 |
-| **一次多主題自動拆篇** | 不相關的主題拆成多篇（最多 6 篇），另外建一篇「總覽」互相連結 |
-| **名詞解釋拆成獨立筆記** | 解釋名詞的段落移到 `研究/`，原處留「摘要（詳見 → [[連結]]）」，和既有筆記去重 |
+| **一次多主題自動拆篇** | 不相關的主題拆成多篇（預設最多 6 篇，`config.json` 的 `maxTopics` 可以改），另外建一篇「總覽」互相連結 |
+| **名詞解釋拆成獨立筆記** | 解釋名詞的段落移到 `研究/`（預設每篇最多 5 個，`maxTerms` 可以改），原處留「摘要（詳見 → [[連結]]）」，和既有筆記去重 |
 | **到期與提醒** | 短期記事到期後移到 `.trash`；提醒用 Web Push 推播到手機和電腦 |
 
 ### 🔎 Agent 研究
@@ -175,6 +175,32 @@ git clone https://github.com/heh844300-cmyk/claude-note.git ClaudeNote
 > `127.0.0.1` 是這台電腦自己，連線不會離開電腦，所以用 http 就安全；從手機或公用電腦連進來時一律是 https。
 
 手機的手動設定與細節：[docs/手機設定.md](docs/手機設定.md)
+
+### 進階設定（`mobile/config.json`）
+
+安裝精靈只會問必要的設定；其他行為可以直接編輯 `mobileconfig.json`，在大括號裡加上想改的鍵，存檔後重新啟動伺服器（`mobilestop-server.cmd` 再雙擊 `mobilestart-hidden.vbs`，或重新開機）。重新執行 `setup.cmd` 時，這些自己加的設定會保留。
+
+| 鍵 | 預設 | 說明 |
+|---|---|---|
+| `maxTopics` | `6` | 一次輸入最多拆成幾篇主題筆記（2～20）；超過的主題併進最後一篇，不會丟掉 |
+| `maxTerms` | `5` | 每篇筆記最多拆出幾個名詞解釋到 `研究/`（1～20），學習筆記也適用 |
+| `termSplit` | `true` | 上傳後要不要把名詞解釋拆成獨立筆記 |
+| `updateCheckHours` | `6` | 每幾小時到 GitHub 檢查新版本（`0` 為關閉） |
+| `dedupEveryDays` | `7` | 每幾天自動掃描重複的名詞筆記（`0` 為只用按鈕） |
+| `fillAfterMs` | `60000` | 灰色連結建立的空白筆記，多久沒動就自動補寫（毫秒，`0` 為關閉） |
+| `vaultExclude` | `[]` | 「筆記庫」分頁不顯示的資料夾，例如 `["私人", "日記/2025"]` |
+
+例：一次最多拆 15 篇、每篇最多拆 10 個名詞
+
+```json
+{
+  "vault": "C:\\ObsidianVault",
+  "maxTopics": 15,
+  "maxTerms": 10
+}
+```
+
+完整的設定清單見 [docs/技術說明.md](docs/技術說明.md#設定mobileconfigjson)。
 
 ---
 
