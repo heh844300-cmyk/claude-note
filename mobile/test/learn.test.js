@@ -108,3 +108,58 @@ const mp = L.followupPrompt(rt, chs[0], '', [], '🎯 再來一題', { level: 4,
 assert(mp.includes('Level 4') && mp.includes('只輸出這兩行') && !mp.includes('JUDGE: correct'), 'follow-up: "one more" asks only a new question at the current level');
 const pj = L.parseJudge('JUDGE: wrong\n你的思路對了一半…\n🤔 再試一次：…');
 assert(pj.judge === 'wrong' && pj.text.startsWith('你的思路') && L.parseJudge('沒有標記').judge === 'none', 'judge line parsed and hidden');
+
+// review of a learning note before upload
+const rbody = '## 重點整理\n- 2NF 要消除遞移相依。\n- 1NF：每個欄位都是不可分割的值。\n- 主鍵可以是 NULL。\n';
+const rp = L.reviewPrompt(rt, { body: rbody, reference: '第一章教學內容', materialsText: '教材段落', web: true });
+assert(rp.includes('網路搜尋查證') && rp.includes('名詞要附英文') && rp.includes('逐字複製') && rp.includes('教材段落') && rp.includes('2NF 要消除遞移相依'), 'review prompt: references, user rules, verbatim quotes, web');
+assert(!L.reviewPrompt(rt, { body: rbody, reference: '', web: false }).includes('網路搜尋查證'), 'review prompt without web search');
+const rout = `=== ISSUE ===
+LEVEL: 錯誤
+QUOTE: 2NF 要消除遞移相依。
+PROBLEM: 消除遞移相依是 3NF；2NF 是消除部分相依。
+FIX: 2NF 要消除部分相依（遞移相依是 3NF 處理的）。
+SOURCE: 第一章教學內容
+=== ISSUE ===
+LEVEL: 錯誤
+QUOTE: 「主鍵可以是   NULL。」
+PROBLEM: 主鍵不能是 NULL。
+FIX: 主鍵不能是 NULL。
+SOURCE: https://example.com
+=== ISSUE ===
+LEVEL: 不精確
+QUOTE: 這句不在筆記裡
+PROBLEM: x
+FIX: y
+=== ISSUE ===
+LEVEL: 待查
+QUOTE: 1NF：每個欄位都是不可分割的值。
+PROBLEM: 定義大致正確，但不同教科書說法不一。
+FIX: none`;
+const ri = L.parseReview(rout, rbody);
+assert(ri.length === 4 && ri[0].level === '錯誤' && ri[0].found && ri[0].state === 'open' && ri[0].source === '第一章教學內容', 'review items parsed');
+assert(ri[1].found && ri[1].quote === '主鍵可以是 NULL。', 'quote found despite quotes marks / extra spaces, stored as the exact body text');
+assert(!ri[2].found && ri[2].level === '不精確' && ri[3].level === '待查' && ri[3].fix === '', 'unknown quote marked not found; 待查 without a fix');
+assert(L.parseReview('NONE', rbody).length === 0 && L.parseReview('', rbody).length === 0, 'no issues');
+const rfx = L.applyFixes(rbody, ri);
+assert(rfx.applied.join() === 'r1,r2' && rfx.body.includes('2NF 要消除部分相依（遞移相依是 3NF 處理的）。') && rfx.body.includes('主鍵不能是 NULL。') && rfx.body.includes('1NF：每個欄位') && !rfx.body.includes('主鍵可以是'), 'fixes applied exactly once each; others untouched');
+assert(L.applyFixes(rfx.body, ri).applied.length === 0, 'applying again changes nothing (quotes gone)');
+
+// one input box: new question / answer to the small question / auto; answers stay under their question
+const tc = [
+  { q: '什麼是主鍵？', a: '主鍵是…\n🤔 小問題：學號能當主鍵嗎？', judge: 'none', kind: 'ask' },
+  { q: '可以', a: '對！', judge: 'correct', kind: 'answer' },
+  { q: '🎯 再來一題', a: '🤔 小問題：姓名適合當主鍵嗎？', judge: 'none', kind: 'more' },
+  { q: '適合', a: '再想想…\n🤔 再試一次：同名的人怎麼辦？', judge: 'wrong', kind: 'answer' },
+  { q: '什麼是外鍵？', a: '外鍵是…\n🤔 小問題：外鍵指向哪裡？', judge: 'none', kind: 'ask' },
+];
+assert(JSON.stringify(L.threadsOf(tc)) === '[[0,1,2,3],[4]]', 'threads: answers and 再來一題 grouped under their question');
+assert(JSON.stringify(L.threadsOf([{ q: 'a', judge: 'none' }, { q: 'b', judge: 'correct' }, { q: '🎯 再來一題', judge: 'none' }, { q: 'c', judge: 'none' }])) === '[[0,1,2],[3]]', 'threads for older entries without kind');
+assert(JSON.stringify(L.threadsOf([{ q: 'x', judge: 'wrong' }])) === '[[0]]' && L.threadsOf([]).length === 0, 'threads: a reply with nothing before it starts a thread');
+assert(L.pendingQuestion(tc) === '外鍵指向哪裡？' && L.pendingQuestion(tc.slice(0, 4)) === '同名的人怎麼辦？' && L.pendingQuestion(tc.slice(0, 2)) === '' && L.pendingQuestion([]) === '', 'pending small question = the last reply\'s 🤔 line');
+const askP = L.followupPrompt(rt, chs[0], '', tc, '那複合鍵呢？', { level: 2, sc: 0, sw: 0 }, 'ask');
+assert(askP.includes('學生這次是在問新的問題') && !askP.includes('JUDGE: correct'), 'mode ask: never judged as an answer');
+const ansP = L.followupPrompt(rt, chs[0], '', tc, '它指向另一張表的主鍵', { level: 2, sc: 0, sw: 0 }, 'answer');
+assert(ansP.includes('一定要判斷對錯') && ansP.includes('「外鍵指向哪裡？」') && ansP.includes('JUDGE: correct') && ansP.includes('JUDGE: wrong') && !ansP.includes('JUDGE: none'), 'mode answer: judged against the pending small question');
+const autoP = L.followupPrompt(rt, chs[0], '', tc, 'x', { level: 2, sc: 0, sw: 0 });
+assert(autoP.includes('先判斷') && autoP.includes('「外鍵指向哪裡？」') && autoP.includes('JUDGE: none'), 'mode auto: the AI decides, told which small question is pending');

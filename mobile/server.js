@@ -533,6 +533,7 @@ function enqueue(id, kind, arg) {
       d.status = 'ready'; d.stage = ''; d.error = ''; d.pending = null;
       await saveDraft(d);
       log('job done', kind, id, d.model);
+      if (d.learn && (kind === 'organize' || kind === 'revise') && d.body) startReview(id).catch((e) => log('review start failed', e.message));
     } catch (e) {
       log('job error', kind, id, e.message);
       if (d) { d.status = 'error'; d.stage = ''; d.error = e.message; await saveDraft(d).catch(() => {}); }
@@ -863,22 +864,28 @@ async function startLesson(id, n) {
     } catch (e) { await updateLesson(id, c.n, (l) => { l.status = 'error'; l.error = e.message.slice(0, 300); }); throw e; }
   });
 }
-async function askLesson(id, n, q, more) {
+// mode: 'auto' (AI decides), 'ask' (new question), 'answer' (answer to the pending small question), 'more' (one more small question)
+async function askLesson(id, n, q, mode = 'auto') {
   const t = await loadTopic(id); const c = chapterOf(t, n);
   const l = await loadLesson(id, c.n);
   if (!l || l.status !== 'ready') throw httpErr(409, '這一章還沒準備好');
   if (l.asking) throw httpErr(409, '上一個問題還在回答中');
-  await updateLesson(id, c.n, (x) => { x.asking = q; });
+  if (mode === 'answer' && !learn.pendingQuestion(l.chat)) throw httpErr(400, '目前沒有等你回答的小問題，請改用「發問」');
+  const more = mode === 'more';
+  await updateLesson(id, c.n, (x) => { x.asking = q; x.askingMode = mode; });
   learnJob(`ask ${id} ${c.n}`, async () => {
     // small-question level: starts from the chapter's quiz level; the AI only says whether this answer was right
     const state = l.adapt || { ...learn.START, level: learn.chapterLevel(t, c.n) };
     let a, judge = 'none';
     try {
-      const r = learn.parseJudge(await ai.plain({ prompt: learn.followupPrompt(t, c, l.content, l.chat || [], q, state, more), model: CFG.bigModel, timeoutMs: CFG.claudeTimeoutMs }));
+      const r = learn.parseJudge(await ai.plain({ prompt: learn.followupPrompt(t, c, l.content, l.chat || [], q, state, mode), model: CFG.bigModel, timeoutMs: CFG.claudeTimeoutMs }));
       a = r.text || '（AI 沒有回答）'; judge = r.judge;
     } catch (e) { a = '⚠️ 回答失敗：' + e.message.slice(0, 200); }
+    if (mode === 'ask') judge = 'none';                // the student said it is a new question
     const step = judge === 'none' || more ? { st: state, event: null } : learn.stepLevel(state, judge);
-    await updateLesson(id, c.n, (x) => { x.chat = (x.chat || []).concat([{ q, a, judge, event: step.event, level: step.st.level, at: new Date().toISOString() }]); x.adapt = step.st; x.asking = null; });
+    // where it goes: answers and 再來一題 stay under the question they belong to; a new question starts a new thread
+    const kind = more ? 'more' : mode === 'answer' || (mode === 'auto' && judge !== 'none') ? 'answer' : 'ask';
+    await updateLesson(id, c.n, (x) => { x.chat = (x.chat || []).concat([{ q, a, judge, kind, event: step.event, level: step.st.level, at: new Date().toISOString() }]); x.adapt = step.st; x.asking = null; x.askingMode = null; });
   });
 }
 
@@ -995,6 +1002,42 @@ async function learnDraft(t, { chapter, text, title }) {
   enqueue(id, 'organize');
   return d;
 }
+// ---- review of a learning-note draft before upload ----
+// kept in its own file (review.json in the draft folder) so it never races the user's draft saves, and run on its own
+// queue: a 1–3 minute web check must not hold up lessons (learnChain) or wait behind a 25-minute Agent job
+const reviewFile = (id) => path.join(draftDir(id), 'review.json');
+const loadReview = (id) => { try { return JSON.parse(fs.readFileSync(reviewFile(id), 'utf8')); } catch { return null; } };
+async function saveReview(id, r) {
+  if (!draftExists(id)) return false;          // uploaded or deleted meanwhile: never recreate the folder
+  const f = reviewFile(id);
+  try { await fsp.writeFile(f + '.tmp', JSON.stringify(r, null, 2), 'utf8'); await renameRetry(f + '.tmp', f); return true; } catch { return false; }
+}
+let reviewChain = Promise.resolve();
+async function startReview(id) {
+  const run = crypto.randomBytes(4).toString('hex'), web = agentAvailable();
+  await saveReview(id, { id: run, status: 'processing', web, at: new Date().toISOString(), items: [], error: '' });
+  reviewChain = reviewChain.then(async () => {
+    const cur = loadReview(id); if (!cur || cur.id !== run) return;        // replaced by a newer review, or the draft is gone
+    let res;
+    try {
+      const d = await loadDraft(id);
+      const t = await loadTopic(d.learn.topic).catch(() => null) || { title: d.learn.topicTitle, materials: [] };
+      const docs = await materialDocs(t).catch(() => []);
+      const prompt = learn.reviewPrompt(t, { body: d.body, reference: d.text, materialsText: docs.length ? learn.pickPassages(docs, d.body, 12000) : '', web });
+      log('review start', id, web ? '(web)' : '');
+      const out = web ? await ai.research({ prompt, model: CFG.agentModel, cwd: AGENT_CWD, timeoutMs: CFG.agentTimeoutMs })
+        : await ai.plain({ prompt, model: CFG.bigModel, timeoutMs: CFG.claudeTimeoutMs });
+      res = { status: 'ready', error: '', items: learn.parseReview(out, d.body), pdfSkipped: t.materials.some((m) => m.type === 'pdf') };
+      log('review done', id, res.items.length, 'issues');
+    } catch (e) { res = { status: 'error', error: String(e.message).slice(0, 300), items: [] }; log('review error', id, e.message); }
+    const now = loadReview(id); if (!now || now.id !== run) return;        // a revise started a newer review meanwhile: drop this one
+    await saveReview(id, { ...now, ...res, doneAt: new Date().toISOString() });
+  }).catch((e) => log('review chain', e.message));
+}
+const withReview = (d) => (d.learn ? { ...d, review: loadReview(d.id) } : d);
+const reviewSummary = (d) => { if (!d.learn) return null; const r = loadReview(d.id); if (!r) return null;
+  return { status: r.status, open: r.status === 'ready' ? r.items.filter((x) => x.state === 'open' && x.level !== '待查' && learn.findQuote(d.body || '', x.quote)).length : 0 }; };
+
 async function uploadLearnNote(d) {
   const L = d.learn; const dir = topicDir(L.topic);
   await fsp.mkdir(dir, { recursive: true });
@@ -1747,7 +1790,7 @@ const summary = (d) => ({ id: d.id, createdAt: d.createdAt, updatedAt: d.updated
   group: d.group ? { role: d.group.role, index: d.group.index || 0, size: d.group.size, overviewId: d.group.overviewId || d.id } : null,
   update: d.update ? { note: d.update.note, warnings: d.update.warnings || [] } : null,
   series: d.series ? (findSeries(d.series) || { name: d.series }).name : null,
-  learn: d.learn ? d.learn.topicTitle : null });
+  learn: d.learn ? d.learn.topicTitle : null, review: reviewSummary(d) });
 
 async function route(req, res) {
   const url = new URL(req.url, 'http://local');
@@ -1820,7 +1863,7 @@ async function route(req, res) {
       const isOverview = !!(d.group && d.group.role === 'overview' && d.status !== 'processing');
       if (!p[4] && M === 'GET') {
         if (isOverview) { const entries = await groupEntries(d); d.body = split.overviewBody(entries); d.groupEntries = entries; }
-        return send(res, 200, d);
+        return send(res, 200, withReview(d));
       }
       if (d.status === 'processing') return send(res, 409, { error: '草稿處理中，請稍候' });
       if (!p[4] && M === 'DELETE') {
@@ -1835,7 +1878,7 @@ async function route(req, res) {
         const b = await readJson(req);
         if (isOverview) { if (typeof b.title === 'string' && b.title.trim()) d.title = b.title.trim(); } // only the title is editable
         else applyEdits(d, b);
-        await saveDraft(d); return send(res, 200, d);
+        await saveDraft(d); return send(res, 200, withReview(d));
       }
       // upload every pending topic of the group (the overview follows automatically)
       if (p[4] === 'upload-all' && M === 'POST') {
@@ -1861,13 +1904,33 @@ async function route(req, res) {
         if (!b.instruction || !String(b.instruction).trim()) return send(res, 400, { error: '請輸入修改要求' });
         applyEdits(d, b); d.status = 'processing'; d.stage = '排隊中…'; d.error = '';
         d.pending = { kind: 'revise', instruction: String(b.instruction).trim() };
-        await saveDraft(d); enqueue(id, 'revise', d.pending.instruction); return send(res, 202, d);
+        await saveDraft(d); enqueue(id, 'revise', d.pending.instruction); return send(res, 202, withReview(d));
       }
       if (p[4] === 'retry' && M === 'POST') {
         const kind = d.pending && d.pending.kind === 'revise' ? 'revise' : (d.body ? null : d.update ? 'update' : 'organize');
         if (!kind) return send(res, 400, { error: '沒有需要重試的工作' });
         d.status = 'processing'; d.stage = '排隊中…'; d.error = ''; await saveDraft(d);
-        enqueue(id, kind, d.pending && d.pending.instruction); return send(res, 202, d);
+        enqueue(id, kind, d.pending && d.pending.instruction); return send(res, 202, withReview(d));
+      }
+      // learning notes: AI review (facts / concepts) — re-run, or apply / ignore some of its items
+      if (p[4] === 'review' && !p[5] && M === 'POST') {
+        if (!d.learn) return send(res, 400, { error: '只有學習筆記有審查' });
+        const b = await readJson(req).catch(() => ({})); applyEdits(d, b); await saveDraft(d);
+        await startReview(id); return send(res, 202, withReview(d));
+      }
+      if (p[4] === 'review' && p[5] === 'apply' && M === 'POST') {
+        const r = loadReview(id);
+        if (!d.learn || !r || r.status !== 'ready') return send(res, 409, { error: '沒有可以處理的審查結果' });
+        const b = await readJson(req);
+        const ids = new Set(Array.isArray(b.ids) ? b.ids.map(String) : []), action = b.action === 'ignore' ? 'ignore' : b.action === 'reopen' ? 'reopen' : 'apply';
+        applyEdits(d, b);                                  // the user's current (maybe unsaved) edits first
+        const pick = r.items.filter((x) => ids.has(x.id));
+        if (action === 'apply') {
+          const { body, applied } = learn.applyFixes(d.body, pick.filter((x) => x.state === 'open'));
+          d.body = body; for (const x of r.items) if (applied.includes(x.id)) x.state = 'applied';
+        } else for (const x of pick) x.state = action === 'ignore' ? 'ignored' : 'open';
+        await saveDraft(d); await saveReview(id, r);
+        return send(res, 200, withReview(d));
       }
       if (p[4] === 'upload' && M === 'POST') {
         applyEdits(d, await readJson(req)); checkTimes(d);
@@ -1954,12 +2017,14 @@ async function route(req, res) {
       }
       if (tid && p[4] === 'lesson' && p[5]) {
         const n = +p[5];
-        if (!p[6] && M === 'GET') { const t = await loadTopic(tid); const c = chapterOf(t, n); return send(res, 200, { chapter: c, level: learn.chapterLevel(t, n), lesson: await loadLesson(tid, n) }); }
+        if (!p[6] && M === 'GET') { const t = await loadTopic(tid); const c = chapterOf(t, n); const l = await loadLesson(tid, n);
+          return send(res, 200, { chapter: c, level: learn.chapterLevel(t, n), lesson: l, threads: learn.threadsOf(l && l.chat), pending: learn.pendingQuestion(l && l.chat) }); }
         if (!p[6] && M === 'POST') { await startLesson(tid, n); return send(res, 202, { ok: true }); }
         if (p[6] === 'ask' && M === 'POST') {
           const b = await readJson(req), more = !!b.more;
-          const q = more ? '🎯 再來一題' : String(b.q || '').trim().slice(0, 2000); if (!q) throw httpErr(400, '請輸入問題');
-          await askLesson(tid, n, q, more); return send(res, 202, { ok: true });
+          const mode = more ? 'more' : ['ask', 'answer'].includes(b.mode) ? b.mode : 'auto';
+          const q = more ? '🎯 再來一題' : String(b.q || '').trim().slice(0, 2000); if (!q) throw httpErr(400, '請輸入內容');
+          await askLesson(tid, n, q, mode); return send(res, 202, { ok: true });
         }
         if (p[6] === 'notes' && M === 'PUT') { const s = String((await readJson(req)).notes || '').slice(0, 50000); await updateLesson(tid, n, (l) => { l.notes = s; }); return send(res, 200, { ok: true }); }
         if (p[6] === 'quiz' && M === 'POST') return send(res, 202, { id: await startQuiz(tid, { counts: { choice: 3, fill: 1, short: 1 }, difficulty: 'auto', mimic: false, scope: [n], wrongOnly: false }, n) });
@@ -2139,7 +2204,8 @@ const clientIp = (req) => String(req.headers['x-forwarded-for'] || '').split(','
 const KIOSK_WRITES = [
   ['POST', /^\/api\/drafts$/],                                  // new note (text / photos)
   ['PUT', /^\/api\/drafts\/[^/]+$/],                            // edit a draft
-  ['POST', /^\/api\/drafts\/[^/]+\/(revise|retry|upload|upload-all)$/],    // ask AI to revise, retry, upload (one or a whole group) to Obsidian
+  ['POST', /^\/api\/drafts\/[^/]+\/(revise|retry|upload|upload-all)$/],
+  ['POST', /^\/api\/drafts\/[^/]+\/review(\/apply)?$/],          // learning notes: re-run the review, apply / ignore its fixes    // ask AI to revise, retry, upload (one or a whole group) to Obsidian
   ['POST', /^\/api\/agent$/],                                   // let the Agent research a note
   ['POST', /^\/api\/notes\/[^/]+\/answers$/],                   // answer the note's open questions (then the Agent re-runs)
   // learning: new topic, outline, materials, lessons, quizzes, notes (not: deleting a topic / material, changing its settings)
@@ -2203,6 +2269,8 @@ async function publicRoute(req, res) {
 (async () => {
   for (const d of await listDrafts()) {
     if (d.status === 'processing') { d.status = 'error'; d.stage = ''; d.error = '伺服器重新啟動，工作中斷，請按「重試」'; await saveDraft(d); }
+    const rv = d.learn && loadReview(d.id);
+    if (rv && rv.status === 'processing') await saveReview(d.id, { ...rv, status: 'error', error: '伺服器重新啟動，審查中斷，請按「重新審查」' });
   }
   // learning work cut off by a restart: show it as failed so the user can start it again
   for (const t of await listTopics().catch(() => [])) {

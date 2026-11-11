@@ -91,6 +91,15 @@
       <p id="seriesHint" class="hint left"></p>
       <button type="button" id="seriesRedo" class="small" hidden>依新的選擇重新整理</button>
     </div>
+    <div id="reviewBox" class="box review" hidden>
+      <div class="row"><span class="lbl">🔍 內容審查</span><button type="button" id="rvRerun" class="small">重新審查</button></div>
+      <p id="rvStatus" class="hint left"></p>
+      <ul id="rvList" class="rvlist"></ul>
+      <div id="rvActions" class="rvbtns" hidden>
+        <button type="button" id="rvApply" class="primary small">套用勾選的修正</button>
+        <button type="button" id="rvIgnore" class="small">勾選的不用改</button>
+      </div>
+    </div>
     <div id="editImages" class="thumbs"></div>
     <label class="field">標題<input id="edTitle" type="text"></label>
     <label class="field nogroup-ov">標籤（用逗號分隔）<input id="edTags" type="text"></label>
@@ -242,10 +251,18 @@
       <article id="llBody" class="md"></article>
       <div id="llChat"></div>
       <p id="llLevel" class="hint left" hidden></p>
-      <div class="revise" id="llAskRow" hidden>
-        <textarea id="llAsk" rows="2" placeholder="有不懂的地方嗎？直接問；也可以在這裡回答老師的 🤔 小問題"></textarea>
-        <button type="button" id="llAskBtn">發問</button>
-        <button type="button" id="llMoreBtn" title="照目前的等級再出一個小問題">🎯 再來一題</button>
+      <div id="llAskBox" hidden>
+        <div class="seg llmode" id="llMode" role="radiogroup" aria-label="這則是發問還是回答">
+          <button type="button" data-mode="auto" class="active">🤖 自動判斷</button>
+          <button type="button" data-mode="ask">❓ 發問</button>
+          <button type="button" data-mode="answer">✍️ 回答小問題</button>
+        </div>
+        <p id="llPending" class="hint left" hidden></p>
+        <div class="revise" id="llAskRow">
+          <textarea id="llAsk" rows="2" placeholder="有不懂的地方嗎？直接問；也可以在這裡回答老師的 🤔 小問題"></textarea>
+          <button type="button" id="llAskBtn">送出</button>
+          <button type="button" id="llMoreBtn" title="照目前的等級再出一個小問題">🎯 再來一題</button>
+        </div>
       </div>
       <div class="box notesbox">
         <div class="row"><span class="lbl">✏️ 我的筆記</span><span id="llSaved" class="hint"></span></div>

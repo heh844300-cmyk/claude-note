@@ -306,11 +306,34 @@ function parseJudge(out) {
   return { judge: m ? m[1].toLowerCase() : 'none', text: (m ? s.replace(m[0], '') : s).trim() };
 }
 
-function followupPrompt(t, c, lesson, chat, question, state, more) {
+// the small question still waiting for an answer: the last tutor reply ends with "🤔 小問題：…" / "🤔 再試一次：…"
+function pendingQuestion(chat) {
+  const last = (chat || [])[(chat || []).length - 1];
+  const m = last && String(last.a || '').match(/🤔\s*(?:小問題|再試一次)\s*[:：]\s*([\s\S]+)$/);
+  return m ? m[1].trim() : '';
+}
+// chat entries grouped into threads: a new question starts one; answers to its small question and "再來一題" stay under it.
+// entries carry kind 'ask' | 'answer' | 'more'; older entries without it: judged answers and 再來一題 are replies
+const isReply = (m) => (m.kind ? m.kind !== 'ask' : (m.judge && m.judge !== 'none') || m.q === '🎯 再來一題');
+function threadsOf(chat) {
+  const out = [];
+  (chat || []).forEach((m, i) => { if (isReply(m) && out.length) out[out.length - 1].push(i); else out.push([i]); });
+  return out;
+}
+// mode: 'auto' (the AI decides), 'ask' (a new question), 'answer' (an answer to the pending small question), 'more' (one more small question)
+function followupPrompt(t, c, lesson, chat, question, state, mode = 'auto') {
+  if (mode === true) mode = 'more';
   const st = { ...START, ...(state || {}) }, L = st.level;
   const up = st.sc + 1 >= 2 && L < 5, down = st.sw + 1 >= 2 && L > 1;
   const NO_NEW = '不要再出新的小問題（學生想再練會自己按「再來一題」）。';
-  if (more) return `你是「${t.title}」的家教，剛教完第 ${c.n} 章「${c.title}」。學生想再練一題。請用繁體中文（台灣用語）出一個新的小問題，確認他懂這一章的內容；不要跟之前問過的小問題重複，不要附答案。
+  const correctB = `回答的第一行寫「JUDGE: correct」。${up ? '這是連續第 2 題答對：具體稱讚他做對的邏輯，告訴他之後按「🎯 再來一題」題目會難一點。' : '具體指出他做對了哪個邏輯。'}${NO_NEW}`;
+  const wrongB = `第一行寫「JUDGE: wrong」。${st.sw + 1 >= 2 ? `這是連續第 2 次答錯：不要讓他覺得挫折，把原因歸於這個觀念本來就比較繞，直接說明正確答案，再退一步用更直覺的方式重新講一次${down ? '，告訴他之後按「🎯 再來一題」題目會簡單一點' : ''}。${NO_NEW}` : '先肯定他的思路、指出盲點，然後給一個縮小範圍的提示，請他再試一次「同一題」：不要出新的小問題，最後一行寫「🤔 再試一次：…」把原題換個說法再問一次。'}`;
+  const newB = `第一行寫「JUDGE: none」，回答他的問題，最後一行寫「🤔 小問題：…」，出一個 Level ${L} 、能在一兩句話內回答的小問題或小任務，確認他懂了剛剛講的內容（不要附答案）。`;
+  const pq = pendingQuestion(chat);
+  const branches = mode === 'ask' ? `學生這次是在問新的問題（不是在回答小問題）：${newB}`
+    : mode === 'answer' ? `學生這次是在回答你出的小問題${pq ? `「${pq.slice(0, 400)}」` : ''}（不是新的問題），一定要判斷對錯：\n- 答對了：${correctB}\n- 答錯或只對一部分：${wrongB}`
+    : `先判斷學生這次的訊息是不是在回答你上一則的小問題${pq ? `「${pq.slice(0, 400)}」` : ''}，然後：\n- 是，而且答對了：${correctB}\n- 是，但答錯或只對一部分：${wrongB}\n- 不是（他在問新的問題）：${newB}`;
+  if (mode === 'more') return `你是「${t.title}」的家教，剛教完第 ${c.n} 章「${c.title}」。學生想再練一題。請用繁體中文（台灣用語）出一個新的小問題，確認他懂這一章的內容；不要跟之前問過的小問題重複，不要附答案。
 第一行寫「JUDGE: none」，第二行寫「🤔 小問題：…」，只輸出這兩行。
 難度：Level ${L}（${LEVELS[L].name}）——${LEVELS[L].chat}
 ${rulesBlock(t)}${DATA_NOTE}
@@ -321,10 +344,7 @@ ${chat.length ? '===== 之前的問答 =====\n' + chat.slice(-6).map((m) => `問
 - 如果學生這次是在回答你上一則的「小問題」或「再試一次」：先具體說他哪裡對、哪裡還不對（答錯時先肯定他的思路，再指出盲點），補充必要的說明。
 
 動態難度（目前的等級由系統記錄，你照下面的分支做，不用自己計算）：
-目前是 Level ${L}（${LEVELS[L].name}）。先判斷學生這次的訊息是不是在回答你上一則的小問題，然後：
-- 是，而且答對了：回答的第一行寫「JUDGE: correct」。${up ? '這是連續第 2 題答對：具體稱讚他做對的邏輯，告訴他之後按「🎯 再來一題」題目會難一點。' : '具體指出他做對了哪個邏輯。'}${NO_NEW}
-- 是，但答錯或只對一部分：第一行寫「JUDGE: wrong」。${st.sw + 1 >= 2 ? `這是連續第 2 次答錯：不要讓他覺得挫折，把原因歸於這個觀念本來就比較繞，直接說明正確答案，再退一步用更直覺的方式重新講一次${down ? '，告訴他之後按「🎯 再來一題」題目會簡單一點' : ''}。${NO_NEW}` : '先肯定他的思路、指出盲點，然後給一個縮小範圍的提示，請他再試一次「同一題」：不要出新的小問題，最後一行寫「🤔 再試一次：…」把原題換個說法再問一次。'}
-- 不是（他在問新的問題）：第一行寫「JUDGE: none」，回答他的問題，最後一行寫「🤔 小問題：…」，出一個 Level ${L} 、能在一兩句話內回答的小問題或小任務，確認他懂了剛剛講的內容（不要附答案）。
+目前是 Level ${L}（${LEVELS[L].name}）。${branches}
 各等級的講解方式與小問題：
 ${[1, 2, 3, 4, 5].map((l) => `- Level ${l}（${LEVELS[l].name}）：${LEVELS[l].chat}`).join('\n')}
 ${rulesBlock(t)}${DATA_NOTE}
@@ -417,6 +437,77 @@ const LEARN_RULES = (t, chapter) => `
 - 不要拆成多篇筆記。EXPIRES 一律 never，REMIND 寫 none，AGENT 寫 no。
 `;
 
+// ---------- review of a learning-note draft before upload: find factual / conceptual errors ----------
+const REVIEW_LEVELS = ['錯誤', '不精確', '待查'];
+const REVIEW_MAX = 10;
+function reviewPrompt(t, { body, reference, materialsText, web }) {
+  return `你是「${t.title}」的審稿老師。下面是學生剛整理好、準備存進筆記庫的學習筆記。請檢查筆記裡的**事實與觀念**有沒有錯，讓學生在存檔前修正。
+
+依據：先對照「這一章的教學內容與上課紀錄」裡老師講的內容、問答的回答、測驗的正確答案，以及「教材」（其中「我的筆記」和「我的答案」是學生自己寫的，可能就是錯的來源，不能當成依據）；${web ? '兩者都沒有提到、又不確定的地方，用網路搜尋查證（以官方文件、教科書、可信來源為準）。' : '兩者都沒有提到的地方，用你自己的知識判斷；沒把握就標「待查」。'}
+
+規則：
+- 只挑事實錯誤、觀念錯誤、定義或公式寫錯、跟教材矛盾、說法不精確到會誤導的地方。不要挑文筆、格式、排版、錯字（除非錯字改變意思），也不要挑學生自己的心得、感想、計畫。
+- 「錯誤」＝確定是錯的；「不精確」＝方向對但說法會誤導或漏了關鍵條件；「待查」＝你懷疑但查不到可靠依據。
+- QUOTE 必須從筆記「逐字複製」一小段（通常是一句或一行，越短越好但要能唯一定位），一個字都不能改；FIX 是可以直接取代 QUOTE 的正確寫法（保留原本的 Markdown 格式，只改錯的部分）。待查的 FIX 可以寫 none。
+- 最多 ${REVIEW_MAX} 個，最嚴重的排前面；沒有問題就只輸出一行 NONE。
+${rulesBlock(t)}${DATA_NOTE}
+
+輸出格式（只輸出以下內容，不要前言、結語或 code block）：
+=== ISSUE ===
+LEVEL: 錯誤 | 不精確 | 待查
+QUOTE: <逐字複製的原文>
+PROBLEM: <哪裡有問題，一兩句>
+FIX: <建議的寫法>
+SOURCE: <依據：教學內容、教材檔名或網址>
+=== ISSUE ===
+…
+
+===== 這一章的教學內容與上課紀錄 =====
+${String(reference || '').slice(0, 16000)}
+${materialsText ? '===== 教材 =====\n' + materialsText + '\n' : ''}===== 學生的筆記開始 =====
+${body}
+===== 學生的筆記結束 =====
+`;
+}
+// whitespace-insensitive lookup of a quote in the body -> { start, end } of the exact text in the body, or null
+function findQuote(body, quote) {
+  const q = String(quote || '').trim(); if (!q) return null;
+  const i = body.indexOf(q); if (i >= 0) return { start: i, end: i + q.length };
+  const esc = q.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
+  const m = new RegExp(esc).exec(body);
+  return m ? { start: m.index, end: m.index + m[0].length } : null;
+}
+function parseReview(out, body) {
+  const s = String(out || '').replace(/\r/g, '');
+  const items = [];
+  for (const part of s.split(/^\s*=== ISSUE ===\s*$/m).slice(1)) {
+    const f = {}; let key = null;
+    for (const line of part.split('\n')) {
+      const m = line.match(/^\s*(LEVEL|QUOTE|PROBLEM|FIX|SOURCE)\s*[:：]\s?(.*)$/);
+      if (m) { key = m[1].toLowerCase(); f[key] = m[2]; } else if (key && line.trim()) f[key] += '\n' + line;
+    }
+    const level = REVIEW_LEVELS.find((l) => String(f.level || '').includes(l)) || '待查';
+    const quote = String(f.quote || '').trim().replace(/^[「"]|[」"]$/g, '');
+    const fix = String(f.fix || '').trim();
+    if (!quote || !f.problem) continue;
+    const hit = findQuote(body, quote);
+    items.push({ id: 'r' + (items.length + 1), level, quote: hit ? body.slice(hit.start, hit.end) : quote, problem: String(f.problem).trim(), fix: /^none$/i.test(fix) ? '' : fix,
+      source: String(f.source || '').trim(), found: !!hit, state: 'open' });
+    if (items.length >= REVIEW_MAX) break;
+  }
+  return items;
+}
+// apply the fixes of the given items to body: each quote replaced once; items whose quote is gone are skipped
+function applyFixes(body, items) {
+  let out = body; const applied = [];
+  for (const it of items) {
+    if (!it.fix) continue;
+    const hit = findQuote(out, it.quote); if (!hit) continue;
+    out = out.slice(0, hit.start) + it.fix + out.slice(hit.end); applied.push(it.id);
+  }
+  return { body: out, applied };
+}
+
 module.exports = { TYPES, DEFAULT_SCORE, OBJECTIVE, safeName, parseOutline, mergeOutline, computePlan, planLine, chapterLabel, parseQuestions, choiceIndex,
   publicQuestions, normAnswer, gradeObjective, parseGrades, isWrong, answerText, correctText, renderOutline, renderWrongBook, chunks, pickPassages,
-  outlinePrompt, lessonPrompt, followupPrompt, quizPrompt, gradePrompt, hintPrompt, hintLeaks, rulesBlock, LEVELS, START, stepLevel, levelOf, chapterLevel, parseJudge, notesMaterial, LEARN_RULES, localDate, addDays, daysBetween, wd };
+  outlinePrompt, lessonPrompt, followupPrompt, pendingQuestion, threadsOf, quizPrompt, gradePrompt, hintPrompt, hintLeaks, rulesBlock, LEVELS, START, stepLevel, levelOf, chapterLevel, parseJudge, notesMaterial, LEARN_RULES, reviewPrompt, parseReview, applyFixes, findQuote, REVIEW_LEVELS, localDate, addDays, daysBetween, wd };

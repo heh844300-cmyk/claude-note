@@ -79,12 +79,12 @@ async function loadDrafts() {
     $('#draftList').innerHTML = list.map((d) => `<li data-id="${d.id}"${d.group && d.group.role === 'topic' ? ' class="in-group"' : ''}>
       <div class="t">${grp(d)}${esc(d.title || d.preview || '（未命名）')}</div>
       <div class="m"><span class="pill ${d.status}">${STATUS[d.status] || d.status}</span>${esc(d.status === 'processing' ? d.stage : fmtTime(d.createdAt))}
-      ${d.images ? ' · 📷' + d.images : ''}${d.audios ? ' · 🎙️' + d.audios : ''}${d.reminders ? ' · ⏰' + d.reminders : ''}${d.expires ? ' · 🗑️' + esc(d.expires.slice(5, 10).replace('-', '/')) : ''}</div></li>`).join('');
+      ${d.review ? (d.review.status === 'processing' ? ' · 🔍 審查中' : d.review.status === 'error' ? ' · 🔍 審查失敗' : d.review.open ? ` · ⚠️ ${d.review.open} 個問題` : ' · ✅ 已審查') : ''}${d.images ? ' · 📷' + d.images : ''}${d.audios ? ' · 🎙️' + d.audios : ''}${d.reminders ? ' · ⏰' + d.reminders : ''}${d.expires ? ' · 🗑️' + esc(d.expires.slice(5, 10).replace('-', '/')) : ''}</div></li>`).join('');
   }
   const ups = list.filter((d) => d.update), upReady = ups.filter((d) => d.status === 'ready');
   $('#upAllBtn').hidden = current !== 'drafts' || !upReady.length;
   $('#upAllBtn').textContent = `⬆️ 上傳全部更新草稿（${upReady.length} 篇${ups.length > upReady.length ? `，另有 ${ups.length - upReady.length} 篇還在處理` : ''}）`;
-  schedulePoll(list.some((d) => d.status === 'processing'));
+  schedulePoll(list.some((d) => d.status === 'processing' || (d.review && d.review.status === 'processing')));
   return list;
 }
 function schedulePoll(active) {
@@ -97,21 +97,29 @@ $('#draftList').addEventListener('click', (e) => { const li = e.target.closest('
 let draft = null, dirty = false;
 async function openDraft(id) {
   try { draft = await api('/api/drafts/' + id); } catch (e) { return toast(e.message); }
-  dirty = false; fillEdit(); show('edit'); schedulePoll(draft.status === 'processing');
+  dirty = false; fillEdit(); show('edit'); schedulePoll(draft.status === 'processing' || reviewBusy());
 }
+const reviewBusy = () => !!(draft && draft.review && draft.review.status === 'processing');
 async function refreshEdit() {
   if (!draft) return;
   try {
     const d = await api('/api/drafts/' + draft.id);
-    const was = draft.status; draft = d;
+    const was = draft.status, rWas = draft.review && draft.review.status; draft = d;
+    // a learning draft just finished organizing: its review file appears a moment later — keep polling a few rounds for it
+    if (was === 'processing' && d.status === 'ready' && d.learn) rvWait = 4;
+    if (d.review) rvWait = 0; else if (rvWait > 0) rvWait--;
     if (was === 'processing' && d.status !== 'processing') {
       dirty = false; fillEdit();
-      toast(d.status !== 'ready' ? '處理失敗' : d.group && d.group.role === 'overview' ? `內容有 ${d.group.size} 個主題，已拆成 ${d.group.size} 篇草稿` : '整理好了');
+      toast(d.status !== 'ready' ? '處理失敗' : d.group && d.group.role === 'overview' ? `內容有 ${d.group.size} 個主題，已拆成 ${d.group.size} 篇草稿` : d.learn ? '整理好了，AI 正在審查內容…' : '整理好了');
     }
-    else updateStatus();
-    schedulePoll(d.status === 'processing');
+    else {
+      updateStatus(); fillReview();   // the review box only: never touch the user's unsaved edits
+      if (rWas === 'processing' && d.review && d.review.status === 'ready') toast(d.review.items.length ? `審查完成：找到 ${d.review.items.length} 個可能的問題` : '審查完成：沒有發現錯誤', 4000);
+    }
+    schedulePoll(d.status === 'processing' || reviewBusy() || rvWait > 0);
   } catch (e) { schedulePoll(true); }
 }
+let rvWait = 0;
 function updateStatus() {
   const s = $('#editStatus'), busy = draft.status === 'processing';
   s.hidden = draft.status === 'ready';
@@ -139,8 +147,68 @@ function fillEdit() {
   $('#edAgent').checked = !!draft.agent;
   $('#edModel').textContent = draft.model ? `整理模型：${draft.model === 'haiku' ? 'Haiku（輕量）' : draft.model === 'sonnet' ? 'Sonnet' : draft.model}` : '';
   setMode('edit'); updateStatus(); checkTimes();
-  fillGroup(); fillUpdate(); fillSeries();
+  fillGroup(); fillUpdate(); fillSeries(); fillReview();
 }
+// ---- learning notes: AI review of facts / concepts before upload ----
+const RV_CLASS = { 錯誤: 'err', 不精確: 'warn', 待查: 'info' };
+// open items that still matter: not applied / ignored, and their quote is still in the (maybe edited) body
+const rvInBody = (x) => { const b = $('#edBody').value, q = String(x.quote || '').trim(); return !!q && (b.includes(q) || new RegExp(q.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+')).test(b)); };
+const rvOpen = () => ((draft.review && draft.review.status === 'ready' && draft.review.items) || []).filter((x) => x.state === 'open' && x.level !== '待查' && rvInBody(x));
+function fillReview() {
+  const box = $('#reviewBox'), r = draft && draft.review;
+  box.hidden = !draft || !draft.learn || draft.status !== 'ready';
+  if (box.hidden) return;
+  const busy = !!(r && r.status === 'processing');
+  $('#rvRerun').textContent = r ? '重新審查' : '開始審查';
+  $('#rvRerun').disabled = busy;
+  const note = r && r.status === 'ready' ? (r.web ? '已對照教學內容、教材並上網查證。' : '已對照教學內容與教材（這次沒有上網查證）。') + (r.pdfSkipped ? 'PDF 教材沒有列入審查。' : '') : '';
+  $('#rvStatus').innerHTML = !r ? '還沒審查。'
+    : busy ? '⏳ AI 正在對照這一章的教學內容和教材檢查筆記' + (r.web ? '，必要時會上網查證' : '') + '，大約 1～3 分鐘。可以先看、先改，結果出來會顯示在這裡。'
+    : r.status === 'error' ? '⚠️ 審查失敗：' + esc(r.error || '') + '　可以按「重新審查」。'
+    : !r.items.length ? '✅ 沒有發現事實或觀念上的錯誤。' + esc(note)
+    : `找到 ${r.items.length} 個可能的問題，勾選要套用的修正，或標成不用改。` + esc(note);
+  const items = (r && r.status === 'ready' && r.items) || [];
+  // re-rendering (typing in the note, polling) keeps the checkboxes the user changed
+  const prev = {}, rid = draft.id + '|' + (r ? r.id : '');
+  if ($('#rvList').dataset.rid === rid) document.querySelectorAll('#rvList input[data-rv]').forEach((c) => (prev[c.dataset.rv] = c.checked));
+  $('#rvList').dataset.rid = rid;
+  $('#rvList').innerHTML = items.map((x) => {
+    const gone = x.state === 'open' && !rvInBody(x);
+    const can = x.state === 'open' && !gone && x.found && !!x.fix;
+    const tag = x.state === 'applied' ? '<span class="rvstate">✅ 已套用</span>' : x.state === 'ignored' ? `<span class="rvstate">不用改</span> <button type="button" class="link" data-rv-reopen="${x.id}">恢復</button>`
+      : gone ? '<span class="rvstate">原文已經改過</span>' : !x.found ? '<span class="rvstate">找不到原文，請自己修改</span>' : !x.fix ? '<span class="rvstate">請自己確認</span>' : '';
+    return `<li class="rv ${x.state !== 'open' || gone ? 'done' : ''}"><label class="rvhead">${x.state === 'open' && !gone ? `<input type="checkbox" data-rv="${x.id}"${(x.id in prev ? prev[x.id] : can) ? ' checked' : ''}>` : ''}
+      <span class="rvlv ${RV_CLASS[x.level] || 'info'}">${esc(x.level)}</span> ${esc(x.problem)}</label>
+      <div class="rvq"><del>${esc(x.quote)}</del>${x.fix ? `<br>→ <ins>${esc(x.fix)}</ins>` : ''}</div>
+      ${x.source ? `<div class="rvsrc">依據：${esc(x.source)}</div>` : ''}${tag ? `<div>${tag}</div>` : ''}</li>`;
+  }).join('');
+  $('#rvActions').hidden = !items.some((x) => x.state === 'open' && rvInBody(x));
+}
+async function reviewAction(action, ids) {
+  try {
+    const d = await api('/api/drafts/' + draft.id + '/review/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...edits(), ids, action }) });
+    draft = d; $('#edBody').value = d.body; dirty = false; if (!$('#edPreview').hidden) $('#edPreview').innerHTML = renderMd(d.body);
+    fillReview();
+    return d;
+  } catch (e) { toast('失敗：' + e.message, 4000); }
+}
+const rvChecked = () => [...document.querySelectorAll('#rvList input[data-rv]:checked')].map((c) => c.dataset.rv);
+$('#rvApply').onclick = async () => {
+  const ids = rvChecked(); if (!ids.length) return toast('請先勾選要套用的項目');
+  const before = draft.review.items.filter((x) => x.state === 'applied').length;
+  const d = await reviewAction('apply', ids);
+  if (d) { const n = d.review.items.filter((x) => x.state === 'applied').length - before; toast(n === ids.length ? `已套用 ${n} 個修正` : `已套用 ${n} 個；有 ${ids.length - n} 個找不到原文或沒有建議寫法，請自己修改`, 4500); }
+};
+$('#rvIgnore').onclick = () => { const ids = rvChecked(); if (!ids.length) return toast('請先勾選項目'); reviewAction('ignore', ids); };
+$('#rvList').addEventListener('click', (e) => { const b = e.target.closest('[data-rv-reopen]'); if (b) reviewAction('reopen', [b.dataset.rvReopen]); });
+$('#rvRerun').onclick = async () => {
+  try {
+    draft = await api('/api/drafts/' + draft.id + '/review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(edits()) });
+    dirty = false; fillReview(); schedulePoll(true);
+  } catch (e) { toast('失敗：' + e.message, 4000); }
+};
+$('#edBody').addEventListener('input', () => { if (draft && draft.review) { clearTimeout(rvTimer); rvTimer = setTimeout(fillReview, 600); } });
+let rvTimer = null;
 // ---- 接續到: which tracked note this draft continues ----
 function fillSeries() {
   const box = $('#seriesBox');
@@ -259,7 +327,10 @@ async function retry() {
 }
 $('#uploadBtn').onclick = async () => {
   if (!checkTimes()) return toast('請先修正到期時間');
-  if (!confirm('確定上傳到 Obsidian？上傳後草稿會移除。')) return;
+  let warn = '';
+  if (draft.learn && reviewBusy()) warn = '⏳ AI 還在審查這篇筆記，結果還沒出來。\n';
+  else if (draft.learn && rvOpen().length) warn = `⚠️ 審查找到的問題還有 ${rvOpen().length} 個沒處理（錯誤或不精確）。\n`;
+  if (!confirm(warn + '確定上傳到 Obsidian？上傳後草稿會移除。')) return;
   const btn = $('#uploadBtn'); btn.disabled = true;
   try {
     const r = await api('/api/drafts/' + draft.id + '/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(edits()) });
@@ -938,21 +1009,46 @@ async function openLesson(n, start = true) {
   $('#llLevel').hidden = !(l && l.status === 'ready');
   $('#llLevel').textContent = `🎯 小問題等級 Lv.${st.level}（${LEVEL_NAMES[st.level]}）` + (st.sc ? `・連續答對 ${st.sc} 題` : '') + (st.sw ? '・剛剛答錯，再試一次' : '') + '　答對 2 題會升級，連錯 2 題會降一級';
   const mark = (m) => (m.judge === 'correct' ? ' ✅' : m.judge === 'wrong' ? ' ❌' : '') + (m.event === 'up' ? ` <span class="lv">⬆️ 升到 Lv.${m.level}</span>` : m.event === 'down' ? ` <span class="lv">⬇️ 降到 Lv.${m.level}</span>` : '');
-  // each question + answer folds; the newest is open unless the user toggled it (kept across re-renders)
-  const ck = (i) => `${lnTopic}|${n}|${i}`, newest = l && l.asking ? -1 : chat.length - 1;
+  // threads: a question with its answer, then the answers to its small questions and 再來一題 underneath.
+  // Each thread folds; the newest is open unless the user toggled it (kept across re-renders)
+  const threads = r.threads || chat.map((m, i) => [i]);
+  const asking = l && l.asking, intoThread = asking && threads.length && (l.askingMode === 'answer' || l.askingMode === 'more');
+  const ck = (i) => `${lnTopic}|${n}|${i}`, newest = asking && !intoThread ? -1 : threads.length ? threads[threads.length - 1][0] : -1;
   const isOpen = (i) => (ck(i) in chatOpen ? chatOpen[ck(i)] : i === newest);
-  $('#llChat').innerHTML = chat.length || (l && l.asking) ? '<div class="chat">' + chat.map((m, i) => `<details class="cqa" data-i="${i}"${isOpen(i) ? ' open' : ''}><summary class="cq">🙋 ${esc(m.q)}${mark(m)}</summary><div class="ca md">${renderMd(m.a)}</div></details>`).join('') +
-    (l.asking ? `<div class="cq">🙋 ${esc(l.asking)}</div><div class="ca hint left">回答中…</div>` : '') + '</div>' : '';
+  const reply = (m) => `<div class="creply"><div class="cq2">${m.kind === 'more' ? '🎯 再來一題' : '✍️ ' + esc(m.q)}${mark(m)}</div><div class="ca md">${renderMd(m.a)}</div></div>`;
+  const marks = (t) => t.slice(1).map((i) => chat[i]).filter((m) => m.judge === 'correct' || m.judge === 'wrong').map((m) => (m.judge === 'correct' ? '✅' : '❌')).join('');
+  const waiting = (q) => `<div class="creply"><div class="cq2">✍️ ${esc(q)}</div><div class="ca hint left">回答中…</div></div>`;
+  $('#llChat').innerHTML = chat.length || asking ? '<div class="chat">' + threads.map((t, k) => {
+    const m = chat[t[0]], last = k === threads.length - 1;
+    const more = t.length - 1 + (intoThread && last ? 1 : 0);
+    return `<details class="cqa" data-i="${t[0]}"${isOpen(t[0]) || (intoThread && last) ? ' open' : ''}><summary class="cq">🙋 ${esc(m.q)}${mark(m)}${more ? ` <span class="cnt">💬 ${more}${marks(t) ? ' ' + marks(t) : ''}</span>` : ''}</summary>` +
+      `<div class="ca md">${renderMd(m.a)}</div>${t.slice(1).map((i) => reply(chat[i])).join('')}${intoThread && last ? waiting(l.askingMode === 'more' ? '🎯 再來一題' : asking) : ''}</details>`;
+  }).join('') + (asking && !intoThread ? `<div class="cq">🙋 ${esc(asking)}</div><div class="ca hint left">回答中…</div>` : '') + '</div>' : '';
   $('#llChat').querySelectorAll('details.cqa').forEach((d) => d.addEventListener('toggle', () => { chatOpen[ck(d.dataset.i)] = d.open; }));
-  $('#llAskRow').hidden = !ready;
-  $('#llAskBtn').disabled = $('#llMoreBtn').disabled = !!(l && l.asking);
+  $('#llAskBox').hidden = !ready;
+  llPending = r.pending || '';
+  setLlMode(llMode);
+  $('#llAskBtn').disabled = $('#llMoreBtn').disabled = !!asking;
   $('#llQuizBtn').disabled = $('#llFinish').disabled = !ready;
   $('#llRedo').disabled = busy;
   if (busy || (l && l.asking)) lnPoll(() => !$('#lnLesson').hidden && openLesson(n, false), 4000);
 }
+// one input for both: the student picks (or lets the AI decide) whether this is a new question or an answer to the small question
+let llMode = 'auto', llPending = '';
+const LL_PLACEHOLDER = { auto: '有不懂的地方直接問，或回答老師的 🤔 小問題（AI 會自己判斷）', ask: '輸入你想問的問題', answer: '輸入你對 🤔 小問題的回答' };
+function setLlMode(m) {
+  if (m === 'answer' && !llPending) m = 'auto';                 // nothing to answer right now
+  llMode = m;
+  document.querySelectorAll('#llMode button').forEach((b) => { b.classList.toggle('active', b.dataset.mode === m); b.setAttribute('aria-checked', b.dataset.mode === m); });
+  const ab = $('#llMode [data-mode="answer"]'); ab.disabled = !llPending; ab.title = llPending ? '' : '目前沒有等你回答的小問題';
+  $('#llAsk').placeholder = LL_PLACEHOLDER[m];
+  $('#llPending').hidden = !llPending;
+  $('#llPending').textContent = llPending ? '🤔 等你回答：' + llPending.replace(/\s+/g, ' ').slice(0, 160) : '';
+}
+document.querySelectorAll('#llMode button').forEach((b) => (b.onclick = () => setLlMode(b.dataset.mode)));
 $('#llAskBtn').onclick = async () => {
-  const q = $('#llAsk').value.trim(); if (!q) return toast('請輸入問題');
-  try { await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/ask`, jbody('POST', { q })); $('#llAsk').value = ''; openLesson(lnLessonN, false); } catch (e) { toast(e.message); }
+  const q = $('#llAsk').value.trim(); if (!q) return toast(llMode === 'answer' ? '請輸入你的回答' : '請輸入問題');
+  try { await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/ask`, jbody('POST', { q, mode: llMode })); $('#llAsk').value = ''; if (llMode !== 'auto') llMode = 'auto'; openLesson(lnLessonN, false); } catch (e) { toast(e.message); }
 };
 $('#llMoreBtn').onclick = async () => {
   try { await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/ask`, jbody('POST', { more: true })); openLesson(lnLessonN, false); } catch (e) { toast(e.message); }
