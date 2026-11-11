@@ -859,7 +859,7 @@ async function startLesson(id, n) {
     } catch (e) { await updateLesson(id, c.n, (l) => { l.status = 'error'; l.error = e.message.slice(0, 300); }); throw e; }
   });
 }
-async function askLesson(id, n, q) {
+async function askLesson(id, n, q, more) {
   const t = await loadTopic(id); const c = chapterOf(t, n);
   const l = await loadLesson(id, c.n);
   if (!l || l.status !== 'ready') throw httpErr(409, '這一章還沒準備好');
@@ -870,10 +870,10 @@ async function askLesson(id, n, q) {
     const state = l.adapt || { ...learn.START, level: learn.chapterLevel(t, c.n) };
     let a, judge = 'none';
     try {
-      const r = learn.parseJudge(await ai.plain({ prompt: learn.followupPrompt(t, c, l.content, l.chat || [], q, state), model: CFG.bigModel, timeoutMs: CFG.claudeTimeoutMs }));
+      const r = learn.parseJudge(await ai.plain({ prompt: learn.followupPrompt(t, c, l.content, l.chat || [], q, state, more), model: CFG.bigModel, timeoutMs: CFG.claudeTimeoutMs }));
       a = r.text || '（AI 沒有回答）'; judge = r.judge;
     } catch (e) { a = '⚠️ 回答失敗：' + e.message.slice(0, 200); }
-    const step = judge === 'none' ? { st: state, event: null } : learn.stepLevel(state, judge);
+    const step = judge === 'none' || more ? { st: state, event: null } : learn.stepLevel(state, judge);
     await updateLesson(id, c.n, (x) => { x.chat = (x.chat || []).concat([{ q, a, judge, event: step.event, level: step.st.level, at: new Date().toISOString() }]); x.adapt = step.st; x.asking = null; });
   });
 }
@@ -1754,6 +1754,7 @@ async function route(req, res) {
     if (p[2] === 'health') return send(res, 200, { ok: true });
     if (p[2] === 'version' && !p[3] && M === 'GET') return send(res, 200, version.get());
     if (p[2] === 'version' && p[3] === 'check' && M === 'POST') return send(res, 200, await version.check());
+    if (p[2] === 'changelog' && !p[3] && M === 'GET') return send(res, 200, version.changelog());
     if (p[2] === 'features') {
       // connection addresses for the 「連線網址」 box (phone via Tailscale, public computer via Funnel)
       const mobileUrl = CFG.publicUrl || '', publicPcUrl = CFG.publicPort && CFG.funnelUrl ? CFG.funnelUrl : '';
@@ -1951,7 +1952,11 @@ async function route(req, res) {
         const n = +p[5];
         if (!p[6] && M === 'GET') { const t = await loadTopic(tid); const c = chapterOf(t, n); return send(res, 200, { chapter: c, level: learn.chapterLevel(t, n), lesson: await loadLesson(tid, n) }); }
         if (!p[6] && M === 'POST') { await startLesson(tid, n); return send(res, 202, { ok: true }); }
-        if (p[6] === 'ask' && M === 'POST') { const q = String((await readJson(req)).q || '').trim().slice(0, 2000); if (!q) throw httpErr(400, '請輸入問題'); await askLesson(tid, n, q); return send(res, 202, { ok: true }); }
+        if (p[6] === 'ask' && M === 'POST') {
+          const b = await readJson(req), more = !!b.more;
+          const q = more ? '🎯 再來一題' : String(b.q || '').trim().slice(0, 2000); if (!q) throw httpErr(400, '請輸入問題');
+          await askLesson(tid, n, q, more); return send(res, 202, { ok: true });
+        }
         if (p[6] === 'notes' && M === 'PUT') { const s = String((await readJson(req)).notes || '').slice(0, 50000); await updateLesson(tid, n, (l) => { l.notes = s; }); return send(res, 200, { ok: true }); }
         if (p[6] === 'quiz' && M === 'POST') return send(res, 202, { id: await startQuiz(tid, { counts: { choice: 3, fill: 1, short: 1 }, difficulty: 'auto', mimic: false, scope: [n], wrongOnly: false }, n) });
         if (p[6] === 'finish' && M === 'POST') {

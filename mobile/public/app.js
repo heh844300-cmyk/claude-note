@@ -765,16 +765,48 @@ function renderVersion() {
   b.textContent = isNew ? `🆕 有新版本 ${v.latest.version}` : `${v.version}${v.date ? ' · ' + v.date.slice(5).replace('-', '/') : ''}`;
   b.title = isNew ? `目前 ${v.version}，最新 ${v.latest.version}：${v.latest.subject}` : `版本 ${v.version}（${v.sha}）${v.checkedAt ? '，' + fmtTime(v.checkedAt) + ' 檢查過' : ''}`;
 }
-async function loadVersion() { try { verInfo = await api('/api/version'); } catch { verInfo = null; } renderVersion(); }
-$('#verBadge').onclick = async () => {
-  const v = verInfo;
-  if (v && v.newer && v.latest) return toast(`有新版本 ${v.latest.version}（目前 ${v.version}）：${v.latest.subject}。在電腦上雙擊 ClaudeNote 資料夾裡的 update.cmd 就會更新。`, 9000);
-  if (document.body.classList.contains('kiosk-mode')) return toast(`目前版本 ${v.version}`);
-  toast('檢查新版本中…', 10000);
+async function loadVersion() { try { verInfo = await api('/api/version'); } catch { verInfo = null; } renderVersion(); maybeShowUpdate(); }
+
+// ---- "what's new" window: pops up once after an update; the version badge opens it any time ----
+const SEEN_KEY = 'cn-seen-version';
+const seenGet = () => { try { return localStorage.getItem(SEEN_KEY); } catch { return null; } };
+const seenSet = (v) => { try { localStorage.setItem(SEEN_KEY, v); } catch {} };
+let updateShown = false;
+function maybeShowUpdate() {
+  const v = verInfo && verInfo.version; if (!v || updateShown) return;
+  updateShown = true;
+  if (seenGet() !== v) openChangelog(true);
+}
+const chEntry = (e) => `<section class="chent"><h3>${esc(e.version)}${e.date ? ` <small>${esc(e.date)}</small>` : ''}</h3><div class="md">${renderMd(e.body)}</div></section>`;
+async function openChangelog(afterUpdate) {
+  let c; try { c = await api('/api/changelog'); } catch (e) { if (!afterUpdate) toast('讀不到更新紀錄：' + e.message, 4000); return; }
+  const cur = c.entries.find((e) => e.version === c.version) || c.entries[0];
+  if (afterUpdate && !cur) return seenSet(c.version);            // nothing to show (no changelog in this install)
+  const older = c.entries.filter((e) => e !== cur);
+  const v = verInfo || {};
+  $('#chTitle').textContent = afterUpdate ? `🎉 已更新到 ${c.version}` : `更新紀錄（目前 ${c.version || '未知版本'}）`;
+  $('#chBody').innerHTML =
+    (c.upcoming && c.upcoming.length ? `<div class="chnew"><b>🆕 GitHub 上有新版本 ${esc(c.upcoming[0].version)}</b><p class="hint left">在電腦上雙擊 ClaudeNote 資料夾裡的 update.cmd 就會更新。新版本會有：</p>${c.upcoming.map(chEntry).join('')}</div>` : '') +
+    (cur ? (afterUpdate ? '' : '<p class="hint left">這個版本：</p>') + chEntry(cur) : '<p class="hint left">這個版本沒有更新紀錄。</p>') +
+    (older.length ? `<details class="chold"><summary>以前的更新（${older.length}）</summary>${older.map(chEntry).join('')}</details>` : '');
+  $('#chCheck').hidden = isKioskMode() || !(v.sha);
+  const d = $('#chDlg'); if (!d.open) { if (d.showModal) d.showModal(); else d.setAttribute('open', ''); }
+  $('#chBody').scrollTop = 0;
+  seenSet(c.version);
+}
+const isKioskMode = () => document.body.classList.contains('kiosk-mode');
+$('#chClose').onclick = () => { const d = $('#chDlg'); d.close ? d.close() : d.removeAttribute('open'); };
+$('#chDlg').addEventListener('click', (e) => { if (e.target.id === 'chDlg') $('#chClose').onclick(); });   // tap outside closes
+$('#chCheck').onclick = async () => {
+  const b = $('#chCheck'); b.disabled = true; b.textContent = '檢查中…';
   try { verInfo = await api('/api/version/check', { method: 'POST' }); renderVersion(); }
-  catch (e) { return toast('檢查失敗：' + e.message, 4000); }
-  toast(verInfo.error ? verInfo.error : verInfo.newer ? `有新版本 ${verInfo.latest.version}，在電腦上雙擊 update.cmd 更新` : `${verInfo.version} 已經是最新版本`, 5000);
+  catch (e) { toast('檢查失敗：' + e.message, 4000); }
+  b.disabled = false; b.textContent = '檢查新版本';
+  if (verInfo && verInfo.error) toast(verInfo.error, 4000);
+  else if (verInfo && !verInfo.newer) toast(`${verInfo.version} 已經是最新版本`, 3000);
+  else openChangelog(false);
 };
+$('#verBadge').onclick = () => openChangelog(false);
 loadVersion(); setInterval(loadVersion, 30 * 60 * 1000);
 
 // ---------- learning (學習) ----------
@@ -883,6 +915,7 @@ $('#ltOutlineBtn').onclick = () => vaultOpen(lnData.links.outline, '還沒有大
 const LEVEL_NAMES = ['', '基礎建立', '標準入門', '概念應用', '進階變形', '大師挑戰'];
 // ---- lesson ----
 let llNotesTimer = null;
+const chatOpen = {}; // lesson chat: which question/answer pairs the user opened or closed
 async function openLesson(n, start = true) {
   const entering = lnLessonN !== n || $('#lnLesson').hidden;
   lnLessonN = n;
@@ -905,10 +938,14 @@ async function openLesson(n, start = true) {
   $('#llLevel').hidden = !(l && l.status === 'ready');
   $('#llLevel').textContent = `🎯 小問題等級 Lv.${st.level}（${LEVEL_NAMES[st.level]}）` + (st.sc ? `・連續答對 ${st.sc} 題` : '') + (st.sw ? '・剛剛答錯，再試一次' : '') + '　答對 2 題會升級，連錯 2 題會降一級';
   const mark = (m) => (m.judge === 'correct' ? ' ✅' : m.judge === 'wrong' ? ' ❌' : '') + (m.event === 'up' ? ` <span class="lv">⬆️ 升到 Lv.${m.level}</span>` : m.event === 'down' ? ` <span class="lv">⬇️ 降到 Lv.${m.level}</span>` : '');
-  $('#llChat').innerHTML = chat.length || (l && l.asking) ? '<div class="chat">' + chat.map((m) => `<div class="cq">🙋 ${esc(m.q)}${mark(m)}</div><div class="ca md">${renderMd(m.a)}</div>`).join('') +
+  // each question + answer folds; the newest is open unless the user toggled it (kept across re-renders)
+  const ck = (i) => `${lnTopic}|${n}|${i}`, newest = l && l.asking ? -1 : chat.length - 1;
+  const isOpen = (i) => (ck(i) in chatOpen ? chatOpen[ck(i)] : i === newest);
+  $('#llChat').innerHTML = chat.length || (l && l.asking) ? '<div class="chat">' + chat.map((m, i) => `<details class="cqa" data-i="${i}"${isOpen(i) ? ' open' : ''}><summary class="cq">🙋 ${esc(m.q)}${mark(m)}</summary><div class="ca md">${renderMd(m.a)}</div></details>`).join('') +
     (l.asking ? `<div class="cq">🙋 ${esc(l.asking)}</div><div class="ca hint left">回答中…</div>` : '') + '</div>' : '';
+  $('#llChat').querySelectorAll('details.cqa').forEach((d) => d.addEventListener('toggle', () => { chatOpen[ck(d.dataset.i)] = d.open; }));
   $('#llAskRow').hidden = !ready;
-  $('#llAskBtn').disabled = !!(l && l.asking);
+  $('#llAskBtn').disabled = $('#llMoreBtn').disabled = !!(l && l.asking);
   $('#llQuizBtn').disabled = $('#llFinish').disabled = !ready;
   $('#llRedo').disabled = busy;
   if (busy || (l && l.asking)) lnPoll(() => !$('#lnLesson').hidden && openLesson(n, false), 4000);
@@ -916,6 +953,9 @@ async function openLesson(n, start = true) {
 $('#llAskBtn').onclick = async () => {
   const q = $('#llAsk').value.trim(); if (!q) return toast('請輸入問題');
   try { await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/ask`, jbody('POST', { q })); $('#llAsk').value = ''; openLesson(lnLessonN, false); } catch (e) { toast(e.message); }
+};
+$('#llMoreBtn').onclick = async () => {
+  try { await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/ask`, jbody('POST', { more: true })); openLesson(lnLessonN, false); } catch (e) { toast(e.message); }
 };
 async function saveLessonNotes() {
   clearTimeout(llNotesTimer);

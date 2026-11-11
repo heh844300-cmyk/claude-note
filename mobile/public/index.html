@@ -245,6 +245,7 @@
       <div class="revise" id="llAskRow" hidden>
         <textarea id="llAsk" rows="2" placeholder="有不懂的地方嗎？直接問；也可以在這裡回答老師的 🤔 小問題"></textarea>
         <button type="button" id="llAskBtn">發問</button>
+        <button type="button" id="llMoreBtn" title="照目前的等級再出一個小問題">🎯 再來一題</button>
       </div>
       <div class="box notesbox">
         <div class="row"><span class="lbl">✏️ 我的筆記</span><span id="llSaved" class="hint"></span></div>
@@ -316,6 +317,14 @@
 </main>
 
 <button type="button" id="verBadge" class="ver" hidden></button>
+<dialog id="chDlg" class="chdlg" aria-labelledby="chTitle">
+  <h2 id="chTitle">更新內容</h2>
+  <div id="chBody"></div>
+  <div class="chbtns">
+    <button type="button" id="chCheck">檢查新版本</button>
+    <button type="button" id="chClose" class="primary">知道了</button>
+  </div>
+</dialog>
 <div id="toast" hidden></div>
 <script src="app.js"></script>
 </body>

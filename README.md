@@ -1,6 +1,6 @@
 # Claude 筆記（Claude Note）
 
-![Version](https://img.shields.io/badge/version-V22.4-5b4bdb)
+![Version](https://img.shields.io/badge/version-V22.5-5b4bdb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/npm%20dependencies-0-brightgreen)
@@ -79,7 +79,7 @@ AI 可以選 **Claude 訂閱**、**ChatGPT 訂閱（Codex CLI）**，或任何 *
 |---|---|
 | **學習主題** | 每個主題一個資料夾（`Claude-Notes/學習/<主題>/`）：大綱、各章筆記、錯題本、教材；筆記裡的名詞連到你既有的筆記 |
 | **大綱** | 有上傳教材（課本、講義）時照教材排；沒有的話 AI 先上網查證再排 |
-| **學習模式** | 一章一章上課（AI 知識＋網路查證），章節裡隨時追問（回答最後會出一個 🤔 小問題確認你懂了，可以直接回答），每章有小測驗；可以跨天接著上 |
+| **學習模式** | 一章一章上課（AI 知識＋網路查證），章節裡隨時追問（回答最後會出一個 🤔 小問題確認你懂了，可以直接回答；回答後只告訴你對不對，想多練按「🎯 再來一題」），問答紀錄可以摺疊（最新的一組展開、舊的收起），每章有小測驗；可以跨天接著上 |
 | **應考模式** | 照你的教材出題：選擇、填空、問答、簡答、申論、名詞解釋，可設定題數、難度、範圍、仿照考古題風格、只練錯題 |
 | **動態難度** | 5 個等級（基礎建立 → 大師挑戰）。程式依你每章的答題表現記錄等級：連對 2 題升一級、連錯 2 題降一級；應考出題選「🎯 自動」就照各章等級出題。上課的 🤔 小問題也會跟著升降級，答錯第一次先給提示讓你再試 |
 | **作答提示** | 卡住時每題可以按「💡 給我提示」（最多 2 個），只給方向、不洩漏答案；結果會標出用了幾個提示 |
@@ -230,9 +230,11 @@ git clone https://github.com/heh844300-cmyk/claude-note.git ClaudeNote
 
 雙擊 **`update.cmd`**（執行 `git pull --ff-only` 後重新啟動伺服器）。要改 AI、金鑰、筆記庫等設定，重新執行 `setup.cmd`。
 
-- 網頁右下角顯示目前版本，例如 `V21.1 · 11/10`
-- 伺服器每 6 小時檢查一次 GitHub；有新版本時右下角變成「🆕 有新版本」並**推播一次**（要先在「新增」頁開啟通知）
-- 點右下角的版本號可以立刻檢查
+- 網頁右下角顯示目前版本，例如 `V22.5 · 11/11`
+- **更新後第一次打開 App 會跳出「更新內容」視窗**，列出這次改了什麼；點右下角的版本號隨時可以看，裡面有「以前的更新」和「檢查新版本」
+- 伺服器每 6 小時檢查一次 GitHub；有新版本時右下角變成「🆕 有新版本」並**推播一次**（要先在「新增」頁開啟通知），視窗裡也看得到新版本會多什麼
+
+每次的更新內容寫在 [`CHANGELOG.md`](CHANGELOG.md)。
 
 版本號寫在根目錄的 [`VERSION`](VERSION)（格式 `大版本.小版本`）：
 
@@ -259,6 +261,7 @@ git clone https://github.com/heh844300-cmyk/claude-note.git ClaudeNote
 ClaudeNote/
 ├── setup.cmd / update.cmd / uninstall.cmd   # 安裝精靈、更新、解除安裝（雙擊執行）
 ├── VERSION                                  # 版本號（大版本.小版本）
+├── CHANGELOG.md                             # 更新紀錄（App 的「更新內容」視窗讀這個檔）
 ├── LICENSE                                  # MIT 授權條款
 ├── prompt.md                                # AI 整理筆記的規則（可以自己改）
 ├── claude-note.bat / claude-note.ps1        # 電腦版：整理剪貼簿文字

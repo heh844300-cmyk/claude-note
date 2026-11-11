@@ -27,9 +27,25 @@ const parseVer = (s) => { const m = String(s || '').trim().match(/^v?(\d+)(?:\.(
 const label = (v) => (v ? 'V' + v[0] + (v[1] ? '.' + v[1] : '') : '');
 const newer = (a, b) => !!(a && b) && (a[0] !== b[0] ? a[0] > b[0] : a[1] > b[1]);   // a newer than b
 
+// CHANGELOG.md at the repo root: "## V22.5（2026-11-11）" headings, newest first, Markdown body under each
+function parseChangelog(md) {
+  const out = []; let cur = null;
+  for (const line of String(md || '').replace(/\r/g, '').split('\n')) {
+    const h = line.match(/^##\s+(.+?)\s*$/);
+    if (h) {
+      const m = h[1].match(/^(.*?)\s*[（(]\s*([^）)]*?)\s*[）)]\s*$/);
+      cur = { version: (m ? m[1] : h[1]).trim(), date: m ? m[2] : '', body: '' }; out.push(cur);
+    } else if (cur) cur.body += line + '\n';
+  }
+  for (const e of out) e.body = e.body.trim();
+  return out;
+}
+// entries of a changelog that are newer than version `cur` ([major, minor])
+const newerEntries = (entries, cur) => entries.filter((e) => newer(parseVer(e.version), cur));
+
 function createVersion({ repoDir, log = () => {}, onNew = async () => {}, notified = { has: () => false, add: () => {} } }) {
   const state = { version: '', sha: '', date: '', newer: false, behind: 0, latest: null, checkedAt: null, error: '' };
-  let cur = null;
+  let cur = null, upcoming = [];
 
   async function local() {
     cur = parseVer((() => { try { return fs.readFileSync(path.join(repoDir, 'VERSION'), 'utf8'); } catch { return ''; } })());
@@ -45,8 +61,10 @@ function createVersion({ repoDir, log = () => {}, onNew = async () => {}, notifi
     try {
       await git(repoDir, ['fetch', '--quiet', 'origin']);
       const up = await git(repoDir, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).catch(() => 'origin/main');
-      const [behind, latest, rv] = await Promise.all([git(repoDir, ['rev-list', '--count', 'HEAD..' + up]),
-        git(repoDir, ['log', '-1', '--format=%h|%cs|%s', up]), git(repoDir, ['show', up + ':VERSION']).catch(() => '')]);
+      const [behind, latest, rv, rc] = await Promise.all([git(repoDir, ['rev-list', '--count', 'HEAD..' + up]),
+        git(repoDir, ['log', '-1', '--format=%h|%cs|%s', up]), git(repoDir, ['show', up + ':VERSION']).catch(() => ''),
+        git(repoDir, ['show', up + ':CHANGELOG.md']).catch(() => '')]);
+      upcoming = newerEntries(parseChangelog(rc), cur);
       const remote = parseVer(rv);
       state.behind = +behind || 0;
       state.latest = { version: label(remote), ...parseLog(latest) };
@@ -65,7 +83,13 @@ function createVersion({ repoDir, log = () => {}, onNew = async () => {}, notifi
     return state;
   }
 
-  return { local, check, get: () => state };
+  // this install's changelog + (when GitHub is ahead) what the newer versions bring
+  function changelog() {
+    let md = ''; try { md = fs.readFileSync(path.join(repoDir, 'CHANGELOG.md'), 'utf8'); } catch {}
+    return { version: state.version, entries: parseChangelog(md), upcoming: state.newer ? upcoming : [] };
+  }
+
+  return { local, check, changelog, get: () => state };
 }
 
-module.exports = { createVersion, parseLog, parseVer, label, newer };
+module.exports = { createVersion, parseLog, parseVer, label, newer, parseChangelog, newerEntries };
