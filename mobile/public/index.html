@@ -152,6 +152,11 @@
       <button type="button" id="dedupScan">立即掃描</button>
       <ul id="dedupList" class="dlist"></ul>
     </div>
+    <div id="expandBox" class="box nokiosk" hidden>
+      <div class="row"><span class="lbl">💡 補寫實際用途</span><span id="expandState" class="hint"></span></div>
+      <p class="hint left">比較早的名詞筆記，有的只有幾行定義，看不出實際用在哪裡。按下去，Agent 會上網查證，在每篇後面補一段「延伸說明」：它是什麼、實際用途（什麼情況會用到、具體例子、跟相近概念怎麼選）、跟你筆記的關係。原本的內容不動，每篇會用一次 Agent。</p>
+      <button type="button" id="expandGo">補寫</button>
+    </div>
     <ul id="noteList" class="list"></ul>
     <p id="noteEmpty" class="empty" hidden>還沒有上傳的筆記</p>
   </section>

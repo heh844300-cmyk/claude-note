@@ -347,7 +347,7 @@ window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault()
 // ---------- notes ----------
 let noteFolder = 'mine';
 document.querySelectorAll('#noteSeg button').forEach((b) => b.addEventListener('click', () => {
-  noteFolder = b.dataset.f; $('#refreshBox').hidden = noteFolder === 'research'; $('#dedupBox').hidden = noteFolder !== 'research'; if (noteFolder === 'research') loadDedup();
+  noteFolder = b.dataset.f; $('#refreshBox').hidden = noteFolder === 'research'; $('#dedupBox').hidden = noteFolder !== 'research'; if (noteFolder === 'research') { loadDedup(); loadExpand(); } else $('#expandBox').hidden = true;
   document.querySelectorAll('#noteSeg button').forEach((x) => x.classList.toggle('active', x === b));
   loadNotes();
 }));
@@ -742,6 +742,25 @@ $('#refreshGo').onclick = async () => {
 $('#refreshBtn').onclick = async () => {
   try { const d = await api('/api/notes/' + encodeURIComponent(reading) + '/refresh', { method: 'POST' }); toast('已開始更新，完成後在「草稿」查看', 3500); openDraft(d.id); }
   catch (e) { toast(e.message, 4500); }
+};
+
+// ---------- thin research notes: let the Agent add a 實際用途 section ----------
+let expandTimer = null;
+async function loadExpand() {
+  clearTimeout(expandTimer);
+  let r; try { r = await api('/api/expand'); } catch (e) { return; }
+  if (noteFolder !== 'research') return;
+  const n = r.thin.length, pending = r.pending || 0;
+  // hidden when there is nothing to do (and nothing running) or the Agent has no web search
+  $('#expandBox').hidden = !r.available || (!n && !pending);
+  $('#expandState').textContent = pending ? `補寫中，還剩 ${pending} 篇` : `${n} 篇還沒有`;
+  $('#expandGo').disabled = !!pending || !n;
+  $('#expandGo').textContent = pending ? '補寫中…' : `補寫這 ${n} 篇`;
+  if (pending) expandTimer = setTimeout(loadExpand, 8000);
+}
+$('#expandGo').onclick = async () => {
+  try { const r = await api('/api/expand', jbody('POST', { all: true })); toast(`已排入 ${r.queued} 篇，完成後筆記會自動更新`, 4000); } catch (e) { return toast(e.message, 4000); }
+  loadExpand();
 };
 
 // ---------- duplicate knowledge nodes ----------

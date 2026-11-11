@@ -24,6 +24,7 @@ const learn = require('./lib/learn');
 const htmltext = require('./lib/htmltext');
 const rules = require('./lib/rules');
 const outline = require('./lib/outline');
+const agentq = require('./lib/agentq');
 
 // ---------- config ----------
 const ROOT = __dirname;
@@ -66,6 +67,8 @@ const CFG = {
   agentModel: 'sonnet',
   librarianModel: 'haiku',                        // decides where research goes; vault read-only, no web
   librarianTimeoutMs: 10 * 60 * 1000,
+  agentParallel: 3,                               // 實際用途 expansions running at once (1-6; more hits AI rate limits)
+  expandTerms: true,                              // a term split into a new research note gets an Agent-written 實際用途 section (uses Agent quota)
   fillAfterMs: 60 * 1000,                         // an empty note made by clicking a gray link is filled after 1 min untouched (0 = off)
   updateCheckHours: 6,                            // check GitHub for a newer version this often, push once per new version (0 = off)
   dedupEveryDays: 7,                            // scan for duplicate research notes / gray links this often (0 = only by button)
@@ -82,6 +85,7 @@ try { Object.assign(CFG, JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8').replace
 catch (e) { if (fs.existsSync(CONFIG_FILE)) { console.error('config.json 格式錯誤：' + e.message); process.exit(1); } }
 CFG.maxTopics = split.clampMax(CFG.maxTopics, split.MAX_TOPICS, 2, 20);
 CFG.maxTerms = split.clampMax(CFG.maxTerms, split.MAX_TERMS, 1, 20);
+CFG.agentParallel = split.clampMax(CFG.agentParallel, 3, 1, 6);
 if (process.env.CN_DUMP_CFG) { console.log(JSON.stringify(CFG, null, 1)); process.exit(0); }
 if (!CFG.vault || !fs.existsSync(CFG.vault)) {
   console.error('沒有設定 Obsidian 筆記庫（config.json 的 "vault"），或資料夾不存在：' + (CFG.vault || '(空白)') + '\n請先執行安裝精靈 setup.cmd。');
@@ -1498,7 +1502,7 @@ function enqueueTerms(note) {
   const jobs = agentJobs();
   const job = { id: crypto.randomBytes(5).toString('hex'), kind: 'terms', note, why: 'auto', status: 'queued', error: '', createdAt: new Date().toISOString() };
   jobs.push(job);
-  while (jobs.length > 200) jobs.shift();
+  agentq.trimJobs(jobs, 200);                  // drops finished jobs only: a bulk backfill must not push out queued work
   agentStore.save();
   kickAgent();
   return job;
@@ -1526,6 +1530,10 @@ async function runTerms(job) {
   const res = split.applyTermReplacements(k.md, moved);
   if (res.count) split.writeKeep(file, res.md, k);
   log('terms:', job.note, 'moved', res.count, 'of', units.length);
+  // a split note only holds the copied definition: let the Agent add what it is used for (needs web search)
+  if (CFG.expandTerms && agentAvailable()) for (const r of results.values()) {
+    if (r && r.action === 'new') enqueueExpand(path.basename(r.rel, '.md'), 'auto');
+  }
   finish(res.count);
 }
 
@@ -1536,7 +1544,7 @@ function enqueueAgent(note, why) {
   if (existing) return existing;
   const job = { id: crypto.randomBytes(5).toString('hex'), note, why, status: 'queued', error: '', createdAt: new Date().toISOString() };
   jobs.push(job);
-  while (jobs.length > 200) jobs.shift();
+  agentq.trimJobs(jobs, 200);                  // drops finished jobs only: a bulk backfill must not push out queued work
   agentStore.save();
   kickAgent();
   return job;
@@ -1556,17 +1564,20 @@ async function linkedNotesContext(md, selfNote) {
   const body = md.replace(/\n## Agent 研究結果\n[\s\S]*?(?=\n## |\n---\n|$)/, '\n');
   return linked + relatedContext(body, ['Claude-Notes/' + selfNote]);
 }
-let agentBusy = false;
-async function kickAgent() {
-  if (agentBusy) return;
-  const job = agentJobs().find((j) => j.status === 'queued');
-  if (!job) return;
-  agentBusy = true;
+// expand jobs run up to agentParallel at once; everything else one at a time (lib/agentq.js)
+let agentBusy = false, lightRunning = 0;
+function kickAgent() {
+  const { light, heavy } = agentq.pickJobs(agentJobs(), { parallel: CFG.agentParallel, lightRunning, heavyBusy: agentBusy });
+  for (const job of light) { lightRunning++; runAgentJob(job).finally(() => { lightRunning--; setImmediate(kickAgent); }); }
+  if (heavy) { agentBusy = true; runAgentJob(heavy).finally(() => { agentBusy = false; setImmediate(kickAgent); }); }
+}
+async function runAgentJob(job) {
   job.status = 'running'; job.startedAt = new Date().toISOString(); agentStore.save();
   log('agent start', job.note);
   try {
     if (job.kind === 'fill') { await runFill(job); return; }
     if (job.kind === 'terms') { await runTerms(job); return; }
+    if (job.kind === 'expand') { await runExpand(job); return; }
     const file = safeNote(job.note);
     const md = await fsp.readFile(file, 'utf8').catch(() => { throw new Error('筆記已不存在（可能已到期或被刪除）'); });
     const prompt = AGENT_PROMPT.replace('{{SANDBOX}}', SANDBOX_ON
@@ -1587,10 +1598,7 @@ async function kickAgent() {
   } catch (e) {
     job.status = 'error'; job.error = e.message.slice(0, 500); job.finishedAt = new Date().toISOString(); agentStore.save();
     log('agent error', job.note, e.message);
-    if (job.kind !== 'terms') await notify('⚠️ Agent 失敗：' + job.note.replace(/\.md$/, ''), e.message.slice(0, 100), '/?note=' + encodeURIComponent(job.note));
-  } finally {
-    agentBusy = false;
-    setImmediate(kickAgent);
+    if (job.kind !== 'terms' && !(job.kind === 'expand' && job.why !== 'manual')) await notify('⚠️ Agent 失敗：' + job.note.replace(/\.md$/, ''), e.message.slice(0, 100), '/?note=' + encodeURIComponent(job.note));
   }
 }
 // ---------- filling gray links: an empty note created by clicking [[name]] gets written by the Agent ----------
@@ -1600,7 +1608,7 @@ const FILL_PROMPT = `你是研究助理 Agent。使用者的 Obsidian 筆記裡�
 
 內容要求：
 - 用繁體中文（台灣用語），寫給初學者也看得懂。
-- 分兩大段：「### 通用說明」（它是什麼、怎麼運作、常見用途、優缺點或限制）與「### 跟你筆記的關係」（根據下面的片段，說明它在使用者那些筆記的脈絡中扮演什麼角色；寫筆記名稱時直接用文字，系統會另外加連結）。
+- 分三大段：「### 通用說明」（它是什麼、怎麼運作、優缺點或限制）、「### 實際用途」（列出 3～5 個具體情境，每個寫清楚「誰、在什麼情況下用它、解決了什麼問題」，附一個真實的例子：產品、場景、指令或生活中的比喻；最後寫不適合用的時候，以及跟相近概念怎麼選）與「### 跟你筆記的關係」（根據下面的片段，說明它在使用者那些筆記的脈絡中扮演什麼角色；寫筆記名稱時直接用文字，系統會另外加連結）。
 - 內容中其他值得深入的重要名詞，第一次出現時寫成 Obsidian 連結，例如 [[WireGuard]]：只寫名詞本身、不加路徑，整篇最多 8 個，不要連結到「{{NAME}}」自己。
 - 所有來源用 Markdown 連結 [標題](網址) 列在 SOURCES 底下。
 
@@ -1608,6 +1616,8 @@ const FILL_PROMPT = `你是研究助理 Agent。使用者的 Obsidian 筆記裡�
 SUMMARY: <1～2 句摘要>
 TAGS: <2～5 個標籤，用逗號分隔>
 ### 通用說明
+<內容>
+### 實際用途
 <內容>
 ### 跟你筆記的關係
 <內容>
@@ -1617,7 +1627,7 @@ SOURCES:
 const FILL_EXISTING_RULES = `
 同義的既有筆記：
 - 下面也會附上「筆記庫裡可能相關的既有筆記」和研究/ 已有的名詞筆記名單。如果其中已經有一篇在講和「{{NAME}}」同一個概念（只是名稱不同，例如「CODE 框架」和「CODE方法」、「第二大腦」和「Building a Second Brain」），不要重寫一份完整說明：
-  SUMMARY 寫「與 [[既有筆記名稱]] 是同一個概念」，「### 通用說明」只寫 2～3 句並連到那篇（例如「完整說明見 [[CODE方法]]」），「### 跟你筆記的關係」照常寫，SOURCES 可以留空。
+  SUMMARY 寫「與 [[既有筆記名稱]] 是同一個概念」，「### 通用說明」只寫 2～3 句並連到那篇（例如「完整說明見 [[CODE方法]]」），「### 實際用途」省略，「### 跟你筆記的關係」照常寫，SOURCES 可以留空。
 - 內容中要連結其他名詞時，已有筆記的就用既有的名稱，不要另造近義的新名稱。
 `;
 function enqueueFill(name, srcAbs, why) {
@@ -1631,11 +1641,53 @@ function enqueueFill(name, srcAbs, why) {
   if (failed && why === 'auto') return failed;
   const job = { id: crypto.randomBytes(5).toString('hex'), kind: 'fill', note: id, name, src, why, status: 'queued', error: '', createdAt: new Date().toISOString() };
   jobs.push(job);
-  while (jobs.length > 200) jobs.shift();
+  agentq.trimJobs(jobs, 200);                  // drops finished jobs only: a bulk backfill must not push out queued work
   agentStore.save();
   log('fill queued', name, src || '(no file)');
   kickAgent();
   return job;
+}
+// ---------- expanding thin research notes (term splits, older fills): the Agent appends a 實際用途 section ----------
+function enqueueExpand(name, why) {
+  const id = library.RESEARCH_FOLDER + '/' + name + '.md';
+  const jobs = agentJobs();
+  const existing = jobs.find((j) => j.kind === 'expand' && j.note === id && (j.status === 'queued' || j.status === 'running'));
+  if (existing) return existing;
+  const job = { id: crypto.randomBytes(5).toString('hex'), kind: 'expand', note: id, name, why, status: 'queued', error: '', createdAt: new Date().toISOString() };
+  jobs.push(job);
+  agentq.trimJobs(jobs, 200);                  // drops finished jobs only: a bulk backfill must not push out queued work
+  agentStore.save();
+  log('expand queued', name, why);
+  kickAgent();
+  return job;
+}
+// research notes that still lack a practical-use section
+function thinResearchNotes() {
+  let files; try { files = fs.readdirSync(RESEARCH_DIR).filter((f) => /\.md$/i.test(f)); } catch { return []; }
+  return files.filter((f) => { try { return library.needsExpansion(fs.readFileSync(path.join(RESEARCH_DIR, f), 'utf8')); } catch { return false; } })
+    .map((f) => f.replace(/\.md$/i, '')).filter((n) => library.safeName(n) === n);
+}
+async function runExpand(job) {
+  const file = library.findCaseless(RESEARCH_DIR, job.name + '.md');
+  const finish = (result) => { job.status = 'done'; job.result = result; job.finishedAt = new Date().toISOString(); agentStore.save(); };
+  if (!file) throw new Error('筆記已不存在');
+  const md0 = fs.readFileSync(file, 'utf8').replace(/^﻿/, '');
+  if (!library.needsExpansion(md0)) return finish('skipped');
+  const sc = library.scanVault(CFG.vault);
+  const contexts = library.linkContext(CFG.vault, sc, job.name).filter((c) => path.resolve(CFG.vault, c.rel).toLowerCase() !== path.resolve(file).toLowerCase());
+  const ctxText = contexts.map((c) => `----- 筆記「${c.title}」 -----\n摘要：${c.summary || '（無）'}\n提到它的那一行：${c.line}`).join('\n\n');
+  const out = await ai.research({ prompt: library.expandPrompt(job.name, md0, ctxText), model: CFG.agentModel, cwd: AGENT_CWD, timeoutMs: CFG.agentTimeoutMs });
+  await fsp.writeFile(path.join(AGENT_CWD, job.id + '.md'), utf8NoBom(out)).catch(() => {});
+  const exp = library.parseExpansion(out);
+  if (!exp) throw new Error('Agent 沒有寫出「實際用途」');
+  // re-read right before writing: the user (or another job) may have changed the note meanwhile
+  const k = split.readKeep(file);
+  if (!library.needsExpansion(k.md)) return finish('skipped');
+  const now = new Date();
+  split.writeKeep(file, library.appendExpansion(k.md, exp, { model: modelLabel(CFG.agentModel), stamp: localISO(now).replace('T', ' ') }), k);
+  finish('expanded');
+  log('expand done', job.name);
+  if (job.why === 'manual') await notify('🔎 已補上實際用途：' + job.name, '點開就能看這篇筆記', '/?note=' + encodeURIComponent(job.note));
 }
 // called from scan(): empty notes whose name is linked from another note, untouched for 1 minute
 function scanFill() {
@@ -1969,12 +2021,23 @@ async function route(req, res) {
       }
       if (p[3] === 'test' && M === 'POST') return send(res, 200, { sent: await notify('🔔 測試通知', '收到這則就代表提醒功能正常', '/') });
     }
-    if ((p[2] === 'fill' || p[2] === 'agent') && M === 'POST' && !agentAvailable()) return send(res, 400, { error: '還沒有設定搜尋服務，Agent 無法查資料（請重新執行安裝精靈）' });
+    if ((p[2] === 'fill' || p[2] === 'agent' || p[2] === 'expand') && M === 'POST' && !agentAvailable()) return send(res, 400, { error: '還沒有設定搜尋服務，Agent 無法查資料（請重新執行安裝精靈）' });
     if (p[2] === 'fill' && M === 'POST') {
       const b = await readJson(req);
       const name = library.safeName(b.name);
       if (!name || name !== String(b.name || '').trim()) return send(res, 400, { error: '名稱不合法' });
       return send(res, 202, enqueueFill(name, null, 'manual'));
+    }
+    // {name}: one research note; {all:true}: every agent-written research note that has no 實際用途 yet
+    if (p[2] === 'expand' && M === 'GET') return send(res, 200, { thin: thinResearchNotes(), available: agentAvailable(),
+      pending: agentJobs().filter((j) => j.kind === 'expand' && (j.status === 'queued' || j.status === 'running')).length });
+    if (p[2] === 'expand' && M === 'POST') {
+      const b = await readJson(req);
+      if (b.all === true) { const names = thinResearchNotes(); for (const n of names) enqueueExpand(n, 'backfill'); return send(res, 202, { queued: names.length, names }); }
+      const name = library.safeName(b.name);
+      if (!name || name !== String(b.name || '').trim()) return send(res, 400, { error: '名稱不合法' });
+      if (!library.findCaseless(RESEARCH_DIR, name + '.md')) return send(res, 404, { error: '找不到筆記' });
+      return send(res, 202, enqueueExpand(name, 'manual'));
     }
     if (p[2] === 'agent') {
       if (M === 'GET') { const n = url.searchParams.get('note'); return send(res, 200, agentJobs().filter((j) => j.kind !== 'terms' && (!n || j.note === n)).slice(-20)); }
