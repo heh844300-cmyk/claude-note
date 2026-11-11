@@ -927,15 +927,19 @@ async function openTopic(id, fresh) {
   const o = t.outline || {};
   const busy = o.status === 'processing';
   $('#ltOutlineState').textContent = busy ? '⏳ 大綱產生中（可能要幾分鐘）' : o.status === 'error' ? '⚠️ ' + (o.error || '失敗') : o.status === 'ready' ? (o.fromMaterials ? '依教材排' : o.web ? 'AI 查證後排' : 'AI 排') : '';
-  $('#ltGenOutline').textContent = t.chapters.length ? '重新產生大綱' : '產生大綱';
-  $('#ltGenOutline').disabled = busy;
-  $('#ltChapters').innerHTML = t.chapters.length ? t.chapters.map((c) => {
+  const orBusy = !!(t.outlineReview && t.outlineReview.status === 'processing');
+  $('#ltGenOutline').textContent = t.chapters.length ? '🔍 依教材檢查大綱' : '產生大綱';
+  $('#ltGenOutline').disabled = busy || orBusy || (t.chapters.length > 0 && !t.materials.length);
+  $('#ltGenOutline').hidden = t.chapters.length > 0 && isKiosk();
+  $('#ltGenOutline').title = t.chapters.length && !t.materials.length ? '先上傳教材才能對照' : '';
+  $('#ltChapters').innerHTML = t.chapters.length ? t.chapters.map((c, i) => {
     const ls = t.lessons[c.n];
     return `<li><button type="button" class="ci" data-done="${c.n}" title="切換完成">${c.status === 'done' ? '✅' : '⬜'}</button>` +
-      `<div class="cb"><div class="ct">第${c.n}章 ${esc(c.title)}${t.levels && t.levels[c.n] ? ` <span class="lv">Lv.${t.levels[c.n].level}</span>` : ''}</div><div class="cp">${esc(c.points.join('、'))}${c.source ? '　📖 ' + esc(c.source) : ''}</div></div>` +
+      `<div class="cb"><div class="ct">第${i + 1}章 ${esc(c.title)}${(c.fresh || []).length ? ' <span class="lv fresh" title="新教材補充了重點">🆕</span>' : ''}${t.levels && t.levels[c.n] ? ` <span class="lv">Lv.${t.levels[c.n].level}</span>` : ''}</div><div class="cp">${esc(c.points.join('、'))}${c.source ? '　📖 ' + esc(c.source) : ''}</div></div>` +
       `<button type="button" class="cgo" data-lesson="${c.n}">${ls === 'processing' ? '準備中…' : ls === 'ready' ? '繼續' : '上課'}</button></li>`;
   }).join('') : '<li class="hint left">還沒有大綱。有教材的話先上傳，再按「產生大綱」。</li>';
   $('#ltQuizBtn').disabled = !t.chapters.length;
+  fillOutlineReview(t);
   const open = t.wrong.filter((w) => w.status !== 'mastered').length;
   $('#ltWrongBtn').textContent = '📕 錯題本' + (open ? `（${open}）` : '');
   $('#ltMatCount').textContent = t.materials.length ? `${t.materials.length} 份` : '還沒有';
@@ -944,13 +948,66 @@ async function openTopic(id, fresh) {
   $('#ltMatHint').textContent = '支援 HTML 網頁檔、文字檔、照片' + (t.pdf ? '、PDF（Claude 可以直接讀，包括掃描檔）' : '（目前的 AI 讀不到 PDF，請改用照片或文字）') + '。考古題用來仿照出題風格。';
   if (fresh) $('#ltMatBox').open = true;
   $('#ltGoal').value = t.goal || ''; $('#ltRules').value = t.rules || ''; $('#ltExam').value = t.examDate || ''; $('#ltPlanTime').value = t.planTime || '';
-  if (busy || t.materials.some((m) => m.status === 'processing') || Object.values(t.lessons).includes('processing')) lnPoll(() => !$('#lnTopic').hidden && openTopic(id), 4000);
+  if (busy || orBusy || t.materials.some((m) => m.status === 'processing') || Object.values(t.lessons).includes('processing')) lnPoll(() => !$('#lnTopic').hidden && openTopic(id), 4000);
 }
 $('#ltGenOutline').onclick = async () => {
-  if (lnData.chapters.length && !confirm('重新產生大綱？已完成的章節（同名的）會保留打勾。')) return;
+  if (lnData.chapters.length) {   // the outline exists: suggestions against all materials, nothing changes until the user applies them
+    try { await lnApi('/' + enc(lnTopic) + '/outline/check', { method: 'POST' }); toast('AI 正在對照全部教材檢查大綱，建議會列在章節下面', 4000); openTopic(lnTopic); }
+    catch (e) { toast(e.message, 4000); }
+    return;
+  }
   try { await lnApi('/' + enc(lnTopic) + '/outline', { method: 'POST' }); toast(lnData.materials.length ? '依教材排大綱中…' : (lnInfo.web ? 'AI 查資料後排大綱，可能要幾分鐘' : 'AI 排大綱中…'), 4000); openTopic(lnTopic); }
   catch (e) { toast(e.message, 4000); }
 };
+// ---- outline suggestions (from new materials) ----
+const OR_TYPE = { ADD: '新增章節', POINTS: '補充重點', EDIT: '修改章節', MOVE: '調整順序', MERGE: '合併章節', CONFLICT: '說法不同' };
+function orText(x, chs) {
+  const name = (n) => { const i = chs.findIndex((c) => c.n === n); return i >= 0 ? `第${i + 1}章「${chs[i].title}」` : (x.labels || {})[n] ? `「${x.labels[n]}」` : '（已不在大綱裡的章節）'; };
+  const pts = x.points && x.points.length ? x.points.join('、') : '';
+  if (x.type === 'ADD') return `新增「${x.title}」，放在${x.chapter === 0 ? '最前面' : x.chapter ? name(x.chapter) + '後面' : '最後面'}` + (pts ? `；重點：${pts}` : '');
+  if (x.type === 'POINTS') return `${name(x.chapter)}補充：${pts}`;
+  if (x.type === 'EDIT') return `${name(x.chapter)}` + (x.title ? `改名為「${x.title}」` : '') + (pts ? `${x.title ? '，' : ''}重點改成：${pts}` : '');
+  if (x.type === 'MOVE') return `${name(x.chapter)}移到${x.after === 0 ? '最前面' : name(x.after) + '後面'}`;
+  if (x.type === 'MERGE') return `${name(x.chapter)}併入${name(x.into)}`;
+  return `${name(x.chapter)}：` + (x.old ? `原本「${x.old}」，` : '') + `教材寫「${x.new}」`;
+}
+function fillOutlineReview(t) {
+  const r = t.outlineReview, box = $('#ltOrBox');
+  const items = (r && r.items) || [], busy = !!(r && r.status === 'processing');
+  const open = items.filter((x) => x.state === 'open' && !x.blocked);
+  box.hidden = !t.chapters.length || !r || (r.status === 'none' && !items.length);
+  if (box.hidden) return;
+  $('#ltOrStatus').innerHTML = busy ? '⏳ AI 正在對照' + (r.all ? '全部教材' : '新的教材') + '檢查大綱，大約 1～3 分鐘。' + (items.some((x) => x.state === 'open') ? '下面是之前還沒處理的建議。' : '')
+    : r.status === 'error' ? '⚠️ ' + esc(r.error || '檢查失敗') + (isKiosk() ? '' : '　可以按「依教材檢查大綱」再試一次。')
+    : open.length ? `有 ${open.length} 條建議${isKiosk() ? '，請在自己的裝置上套用' : '：勾選要套用的，或標成不用改'}。已經上過的章節只會補充重點，不會改名、移動或合併掉。`
+    : '✅ 大綱已經涵蓋目前的教材。';
+  // re-rendering (polling) keeps the checkboxes the user changed
+  const prev = {}, rid = t.id + '|' + (r.at || '');
+  if ($('#ltOrList').dataset.rid === rid) document.querySelectorAll('#ltOrList input[data-or]').forEach((c) => (prev[c.dataset.or] = c.checked));
+  $('#ltOrList').dataset.rid = rid;
+  $('#ltOrList').innerHTML = items.slice().sort((a, b) => (a.state === 'open' ? 0 : 1) - (b.state === 'open' ? 0 : 1)).map((x) => {
+    const can = x.state === 'open' && !x.blocked && !isKiosk();
+    const tag = x.state === 'applied' ? '<span class="rvstate">✅ 已套用</span>' : x.state === 'ignored' ? `<span class="rvstate">不用改</span>${isKiosk() ? '' : ` <button type="button" class="link" data-or-reopen="${esc(x.id)}">恢復</button>`}`
+      : x.blocked ? `<span class="rvstate">🔒 ${esc(x.blocked)}</span>` : '';
+    const def = x.type !== 'CONFLICT';   // a conflict is the user's call: not pre-ticked
+    return `<li class="rv ${x.state !== 'open' || x.blocked ? 'done' : ''}"><label class="rvhead">${can ? `<input type="checkbox" data-or="${esc(x.id)}"${(x.id in prev ? prev[x.id] : def) ? ' checked' : ''}>` : ''}
+      <span class="rvlv ${x.type === 'CONFLICT' ? 'warn' : 'info'}">${OR_TYPE[x.type] || esc(x.type)}</span> ${esc(orText(x, t.chapters))}</label>
+      ${x.reason ? `<div class="rvq">${esc(x.reason)}</div>` : ''}${x.source || (x.materials || []).length ? `<div class="rvsrc">依據：${esc(x.source || (x.materials || []).join('、'))}</div>` : ''}${tag ? `<div>${tag}</div>` : ''}</li>`;
+  }).join('');
+  $('#ltOrActions').hidden = busy || !open.length || isKiosk();
+}
+async function orAction(action, ids) {
+  if (!ids.length) return toast('請先勾選建議');
+  try {
+    const r = await lnApi('/' + enc(lnTopic) + '/outline/apply', jbody('POST', { action, ids }));
+    if (action === 'apply') toast(`已套用 ${r.applied} 條` + (r.skipped.length ? `；${r.skipped.length} 條沒有套用：${r.skipped.map((x) => x.reason).join('；')}` : ''), 6000);
+  } catch (e) { toast(e.message, 4000); }
+  openTopic(lnTopic);
+}
+const orChecked = () => [...document.querySelectorAll('#ltOrList input[data-or]:checked')].map((c) => c.dataset.or);
+$('#ltOrApply').onclick = () => orAction('apply', orChecked());
+$('#ltOrIgnore').onclick = () => orAction('ignore', orChecked());
+$('#ltOrList').addEventListener('click', (e) => { const b = e.target.closest('[data-or-reopen]'); if (b) { e.preventDefault(); orAction('reopen', [b.dataset.orReopen]); } });
 $('#ltChapters').addEventListener('click', async (e) => {
   const d = e.target.closest('[data-done]'), l = e.target.closest('[data-lesson]');
   if (d) { const c = lnData.chapters.find((x) => x.n === +d.dataset.done); try { await lnApi(`/${enc(lnTopic)}/chapters/${c.n}/done`, jbody('POST', { done: c.status !== 'done' })); openTopic(lnTopic); } catch (err) { toast(err.message); } }
@@ -962,7 +1019,7 @@ $('#ltMatFile').addEventListener('change', async (e) => {
   const fd = new FormData(); fd.append('kind', $('#ltMatKind').value); files.forEach((f) => fd.append('files', f, f.name));
   toast('上傳中…', 20000);
   try { const r = await lnApi('/' + enc(lnTopic) + '/materials', { method: 'POST', body: fd }); toast(`已加入 ${r.added.length} 份` + (r.skipped.length ? `；略過：${r.skipped.join('；')}` : '') + (files.some((f) => f.type.startsWith('image/')) ? '。照片會先轉成文字' : '') +
-    (lnData.chapters.length ? '。大綱已經有了：要讓新教材變成章節，請按「重新產生大綱」（已完成的章節會保留）' : ''), 8000); }
+    (r.outlineCheck ? '。AI 會依新教材檢查大綱，建議會列在章節下面' : ''), 8000); }
   catch (err) { toast('上傳失敗：' + err.message, 6000); }
   openTopic(lnTopic);
 });
@@ -993,7 +1050,7 @@ async function openLesson(n, start = true) {
   let r; try { r = await lnApi(`/${enc(lnTopic)}/lesson/${n}`); } catch (e) { return toast(e.message); }
   const l = r.lesson, c = r.chapter;
   if (entering) { lnShow('lnLesson'); $('#llNotes').value = (l && l.notes) || ''; $('#llSaved').textContent = ''; }
-  $('#llTitle').textContent = `第${c.n}章 ${c.title}`;
+  $('#llTitle').textContent = `第${r.pos || '?'}章 ${c.title}`;
   if ((!l || l.status === 'none') && start) {
     try { await lnApi(`/${enc(lnTopic)}/lesson/${n}`, { method: 'POST' }); } catch (e) { return toast(e.message); }
     return openLesson(n, false);
@@ -1031,7 +1088,16 @@ async function openLesson(n, start = true) {
   $('#llAskBtn').disabled = $('#llMoreBtn').disabled = !!asking;
   $('#llQuizBtn').disabled = $('#llFinish').disabled = !ready;
   $('#llRedo').disabled = busy;
-  if (busy || (l && l.asking)) lnPoll(() => !$('#lnLesson').hidden && openLesson(n, false), 4000);
+  const fresh = c.fresh || [], sp = l && l.supp, spBusy = !!(sp && sp.status === 'processing');
+  $('#llSupp').hidden = !ready || !(fresh.length || spBusy);
+  $('#llSupp').innerHTML = spBusy ? '⏳ 正在補上新教材的內容，完成後會接在教學內容的最後面…'
+    : `<div>🆕 新教材補充了這些重點：${esc(fresh.join('、'))}</div>` + (sp && sp.status === 'error' ? `<div class="hint left">⚠️ 上次補充失敗：${esc(sp.error || '')}</div>` : '') +
+      (isKiosk() ? '' : '<button type="button" id="llSuppBtn">補上新內容</button>');
+  const sb = $('#llSuppBtn'); if (sb) sb.onclick = async () => {
+    try { await lnApi(`/${enc(lnTopic)}/lesson/${n}/supplement`, { method: 'POST' }); toast('老師正在補充新的內容…'); } catch (e) { toast(e.message, 4000); }
+    openLesson(n, false);
+  };
+  if (busy || spBusy || (l && l.asking)) lnPoll(() => !$('#lnLesson').hidden && openLesson(n, false), 4000);
 }
 // one input for both: the student picks (or lets the AI decide) whether this is a new question or an answer to the small question
 let llMode = 'auto', llPending = '';
@@ -1085,7 +1151,7 @@ $('#ltQuizBtn').onclick = () => {
   $('#qcWrong').disabled = !wrong; $('#qcWrong').checked = false;
   $('#qcHint').textContent = (past ? '' : '沒有上傳考古題，所以不能仿照風格。') + (wrong ? `錯題本有 ${wrong} 題待複習。` : '錯題本是空的。') + (lnData.materials.length ? '題目會照你上傳的教材出。' : '沒有教材，題目依 AI 的知識出。');
   $('#qcRules').value = lnData.quizRules || '';
-  $('#qcScope').innerHTML = lnData.chapters.map((c) => `<label><input type="checkbox" value="${c.n}"> 第${c.n}章 ${esc(c.title)}</label>`).join('');
+  $('#qcScope').innerHTML = lnData.chapters.map((c, i) => `<label><input type="checkbox" value="${c.n}"> 第${i + 1}章 ${esc(c.title)}</label>`).join('');
 };
 $('#qcAll').onclick = () => { const bs = [...document.querySelectorAll('#qcScope input')]; const on = !bs.every((b) => b.checked); bs.forEach((b) => (b.checked = on)); };
 $('#qcGo').onclick = async () => {

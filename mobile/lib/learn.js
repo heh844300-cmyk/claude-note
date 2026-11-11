@@ -41,11 +41,6 @@ function parseOutline(out) {
   }
   return ch;
 }
-// a regenerated outline keeps what was already done (same title), the rest starts fresh
-function mergeOutline(oldCh, newCh) {
-  const key = (t) => String(t).replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase();
-  return newCh.map((c) => { const o = (oldCh || []).find((x) => key(x.title) === key(c.title)); return o ? { ...c, status: o.status, doneAt: o.doneAt, note: o.note } : c; });
-}
 
 // ---------- study plan ----------
 // Remaining chapters spread over the days from `today` to the day before the exam; the last days are for
@@ -70,15 +65,19 @@ function computePlan({ chapters, examDate, today }) {
   days.push({ date: examDate, kind: 'exam', chapters: [] });
   return { days, examDate };
 }
-const chapterLabel = (c) => `第${c.n}章 ${c.title}`;
+// c.n is a chapter's permanent id (lesson files, levels, quiz and wrong-answer chapters point at it); "第N章" is its position
+const posOf = (chapters, n) => { const i = (chapters || []).findIndex((c) => c.n === +n); return i < 0 ? null : i + 1; };
+const chapterLabel = (c, chapters) => `第${posOf(chapters, c.n) || '?'}章 ${c.title}`;
+// how chapters are named to the AI: the id it must answer with, plus the position the student sees
+const aiChapter = (t, c) => `[代號 ${c.n}] 第${posOf(t.chapters, c.n) || '?'}章「${c.title}」`;
 // the note saved into the vault is named after the chapter's subject only — no "第N章", so it still reads well later
-const noteTitle = (c) => String(c.title || '').trim() || chapterLabel(c);
+const noteTitle = (c) => String(c.title || '').trim() || '未命名章節';
 function planLine(day, chapters) {
   const byN = (n) => chapters.find((c) => c.n === n);
   if (day.kind === 'exam') return '考試日';
   if (day.kind === 'review') return '模擬考＋練錯題';
   if (day.kind === 'light') return '複習前面的章節';
-  return day.chapters.map((n) => chapterLabel(byN(n) || { n, title: '' })).join('、');
+  return day.chapters.map((n) => byN(n)).filter(Boolean).map((c) => chapterLabel(c, chapters)).join('、');
 }
 
 // ---------- quizzes ----------
@@ -188,8 +187,8 @@ function renderOutline(t, { today, noteLink }) {
     `# ${t.title} 大綱\n\n> 📚 這篇由學習功能自動維護，在這裡修改會被覆蓋；你的筆記寫在各章的筆記裡。\n\n`;
   if (t.goal) md += `**目標**：${t.goal}\n\n`;
   md += `**進度**：${done} / ${t.chapters.length} 章` + (t.examDate ? `　**考試**：${t.examDate}（${wd(t.examDate)}）` + (dateOf(today) && daysBetween(today, t.examDate) >= 0 ? `，還有 ${daysBetween(today, t.examDate)} 天` : '') : '') + '\n\n';
-  md += '## 章節\n\n' + (t.chapters.length ? t.chapters.map((c) => `- ${c.status === 'done' ? '✅' : '⬜'} ${c.note ? `[[${noteLink(c.note)}|${chapterLabel(c)}]]` : chapterLabel(c)}` +
-    (c.points.length ? `\n  - 重點：${c.points.join('、')}` : '') + (c.source ? `\n  - 來源：${c.source}` : '')).join('\n') : '（還沒有大綱）') + '\n';
+  md += '## 章節\n\n' + (t.chapters.length ? t.chapters.map((c) => `- ${c.status === 'done' ? '✅' : '⬜'} ${c.note ? `[[${noteLink(c.note)}|${chapterLabel(c, t.chapters)}]]` : chapterLabel(c, t.chapters)}${(c.fresh || []).length ? ' 🆕' : ''}` +
+    (c.points.length ? `\n  - 重點：${c.points.join('、')}` : '') + ((c.fresh || []).length ? `\n  - 🆕 新教材補充（還沒上到）：${c.fresh.join('、')}` : '') + (c.source ? `\n  - 來源：${c.source}` : '')).join('\n') : '（還沒有大綱）') + '\n';
   if (t.examDate) {
     const plan = computePlan({ chapters: t.chapters, examDate: t.examDate, today });
     if (plan.days.length) md += '\n## 讀書計畫\n\n' + plan.days.map((d) => `- ${d.date}（${wd(d.date)}）：${planLine(d, t.chapters)}`).join('\n') + '\n';
@@ -197,11 +196,13 @@ function renderOutline(t, { today, noteLink }) {
   if (t.materials.length) md += '\n## 教材\n\n' + t.materials.map((m) => `- [[${noteLink('教材/' + m.file, true)}|${m.file}]]（${m.kind === 'past' ? '考古題' : '講義／課本'}）`).join('\n') + '\n';
   const qz = (t.quizzes || []).filter((x) => x.graded).slice(-10).reverse();
   if (qz.length) md += '\n## 測驗紀錄\n\n' + qz.map((x) => `- ${x.at.slice(0, 16).replace('T', ' ')}　${x.label}：${x.score} / ${x.max} 分`).join('\n') + '\n';
+  const olog = (t.outlineLog || []).slice(-20).reverse();
+  if (olog.length) md += '\n## 大綱調整紀錄\n\n' + olog.map((e) => `- ${e.at.replace('T', ' ')}${e.materials && e.materials.length ? `（依 ${e.materials.join('、')}）` : ''}：${e.changes.join('；')}`).join('\n') + '\n';
   return md;
 }
 function renderWrongBook(t) {
   const open = t.wrong.filter((w) => w.status !== 'mastered'), ok = t.wrong.filter((w) => w.status === 'mastered');
-  const item = (w) => `### ${w.typeLabel}｜${w.chapter ? '第' + w.chapter + '章　' : ''}${w.at.slice(0, 10)}\n\n${w.q}\n` +
+  const item = (w) => `### ${w.typeLabel}｜${posOf(t.chapters, w.chapter) ? '第' + posOf(t.chapters, w.chapter) + '章　' : ''}${w.at.slice(0, 10)}\n\n${w.q}\n` +
     (w.options ? '\n' + w.options.map((o, k) => `${String.fromCharCode(65 + k)}. ${o}`).join('\n') + '\n' : '') +
     `\n- 我的答案：${w.mine}\n- 正確答案：${w.correct}\n` + (w.feedback ? `- 批改：${w.feedback}\n` : '') + (w.explanation ? `- 解析：${w.explanation}\n` : '');
   return `---\ntitle: ${q1(t.title + ' 錯題本')}\ngenerated_by: claude-note-learn\nlearn_topic: ${q1(t.title)}\ntags:\n  - "學習"\n  - "錯題"\n---\n\n` +
@@ -258,9 +259,9 @@ ${DATA_NOTE}
 ${materialsText || ''}${related || ''}`;
 }
 function lessonPrompt(t, c, { related, web }) {
-  return `你是一位很會教的老師，正在教「${t.title}」這門課的第 ${c.n} 章「${c.title}」。${t.goal ? `\n學生的目標與程度：${t.goal}` : ''}
+  return `你是一位很會教的老師，正在教「${t.title}」這門課的第 ${posOf(t.chapters, c.n)} 章「${c.title}」。${t.goal ? `\n學生的目標與程度：${t.goal}` : ''}
 這一章的重點：${c.points.join('、') || '（自行判斷）'}
-整門課的章節：${t.chapters.map((x) => `${x.n}. ${x.title}`).join('／')}
+整門課的章節：${t.chapters.map((x, i) => `${i + 1}. ${x.title}`).join('／')}
 
 請寫這一章的教學內容：
 ${web ? '- 先用網路搜尋查證重要的事實、定義、版本與數據，優先採用官方文件與權威來源，不要憑記憶猜；最後列出來源。' : '- 根據你的知識教學；不確定的地方要明說。'}
@@ -298,7 +299,7 @@ function difficultyText(t, difficulty, chs) {
   const lv = levelOf(difficulty);
   if (lv !== 'auto') return `難度：Level ${lv}（${LEVELS[lv].name}）——${LEVELS[lv].quiz}`;
   const used = [...new Set(chs.map((c) => chapterLevel(t, c.n)))].sort();
-  return '難度：依學生在各章的程度出題，每一章的題目照該章的等級：' + chs.map((c) => `第${c.n}章 Level ${chapterLevel(t, c.n)}`).join('、') + '。\n' +
+  return '難度：依學生在各章的程度出題，每一章的題目照該章的等級：' + chs.map((c) => `${aiChapter(t, c)} Level ${chapterLevel(t, c.n)}`).join('、') + '。\n' +
     used.map((l) => `- Level ${l}（${LEVELS[l].name}）：${LEVELS[l].quiz}`).join('\n');
 }
 // the AI's verdict on the student's last message: first line "JUDGE: correct | wrong | none"
@@ -335,14 +336,14 @@ function followupPrompt(t, c, lesson, chat, question, state, mode = 'auto') {
   const branches = mode === 'ask' ? `學生這次是在問新的問題（不是在回答小問題）：${newB}`
     : mode === 'answer' ? `學生這次是在回答你出的小問題${pq ? `「${pq.slice(0, 400)}」` : ''}（不是新的問題），一定要判斷對錯：\n- 答對了：${correctB}\n- 答錯或只對一部分：${wrongB}`
     : `先判斷學生這次的訊息是不是在回答你上一則的小問題${pq ? `「${pq.slice(0, 400)}」` : ''}，然後：\n- 是，而且答對了：${correctB}\n- 是，但答錯或只對一部分：${wrongB}\n- 不是（他在問新的問題）：${newB}`;
-  if (mode === 'more') return `你是「${t.title}」的家教，剛教完第 ${c.n} 章「${c.title}」。學生想再練一題。請用繁體中文（台灣用語）出一個新的小問題，確認他懂這一章的內容；不要跟之前問過的小問題重複，不要附答案。
+  if (mode === 'more') return `你是「${t.title}」的家教，剛教完第 ${posOf(t.chapters, c.n)} 章「${c.title}」。學生想再練一題。請用繁體中文（台灣用語）出一個新的小問題，確認他懂這一章的內容；不要跟之前問過的小問題重複，不要附答案。
 第一行寫「JUDGE: none」，第二行寫「🤔 小問題：…」，只輸出這兩行。
 難度：Level ${L}（${LEVELS[L].name}）——${LEVELS[L].chat}
 ${rulesBlock(t)}${DATA_NOTE}
 ===== 這一章的教學內容 =====
 ${String(lesson || '').slice(0, 12000)}
 ${chat.length ? '===== 之前的問答 =====\n' + chat.slice(-6).map((m) => `問：${m.q}\n答：${String(m.a).slice(0, 1500)}`).join('\n\n') + '\n' : ''}`;
-  return `你是「${t.title}」的家教，剛教完第 ${c.n} 章「${c.title}」。學生有問題，請用繁體中文（台灣用語）清楚回答，必要時舉例；答案要跟這一章的內容一致，不確定就明說。只輸出回答（Markdown）。
+  return `你是「${t.title}」的家教，剛教完第 ${posOf(t.chapters, c.n)} 章「${c.title}」。學生有問題，請用繁體中文（台灣用語）清楚回答，必要時舉例；答案要跟這一章的內容一致，不確定就明說。只輸出回答（Markdown）。
 - 如果學生這次是在回答你上一則的「小問題」或「再試一次」：先具體說他哪裡對、哪裡還不對（答錯時先肯定他的思路，再指出盲點），補充必要的說明。
 
 動態難度（目前的等級由系統記錄，你照下面的分支做，不用自己計算）：
@@ -361,7 +362,7 @@ function quizPrompt(t, { counts, difficulty, mimic, scope, lesson, materialsText
   const chs = t.chapters.filter((c) => !scope || !scope.length || scope.includes(c.n));
   return `你是「${t.title}」的出題老師。請出一份測驗：${want}。
 ${difficultyText(t, difficulty, chs.length ? chs : t.chapters)}
-範圍（章節）：${chs.map((c) => `${c.n}. ${c.title}（${c.points.join('、')}）`).join('／') || '全部'}
+範圍（章節）：${chs.map((c) => `${aiChapter(t, c)}（${c.points.join('、')}）`).join('／') || '全部'}
 ${lesson ? '題目要根據下面這一章的教學內容。' : materialsText || pdfNote ? '題目要根據下面附的教材（考試範圍）出，不要超出教材。' : '根據你的知識出題。'}
 ${mimic && pastText ? '下面附了考古題：模仿它的題型配分、問法、用詞與難度出「類似但不同」的新題目，不要照抄原題。' : ''}
 ${wrongItems && wrongItems.length ? '學生之前答錯了下面這些題目：針對這些觀念出「類似但換個角度」的題目，幫他確認是不是真的懂了；題目的 from 欄位填對應錯題的編號。' : ''}
@@ -370,7 +371,7 @@ ${wrongItems && wrongItems.length ? '學生之前答錯了下面這些題目：�
 - fill（填空）：題目裡每個空格寫成 ＿＿＿；blanks 是陣列，每個空格一個陣列，裡面放所有可接受的寫法，例如 [["主鍵","primary key"]]。
 - qa（問答）、short（簡答）、essay（申論）、term（名詞解釋）：answer 寫參考答案，points 列出評分要點（每點一句）。
 - score：建議配分（選擇、填空 2 分；簡答、名詞解釋 5 分；問答 10 分；申論 20 分，可依難度調整）。
-- chapter：這題屬於第幾章（數字）。explanation：一兩句解析。
+- chapter：這題屬於哪一章，填上面那一章的「代號」數字（不是第幾章）。explanation：一兩句解析。
 - 用繁體中文（台灣用語）。題目之間不要重複考同一個點。
 - 題型與題數照上面的要求，不要多也不要少。
 ${rulesBlock(t, rules)}只輸出 JSON 陣列，不要其他文字，例如：
@@ -511,6 +512,6 @@ function applyFixes(body, items) {
   return { body: out, applied };
 }
 
-module.exports = { TYPES, DEFAULT_SCORE, OBJECTIVE, safeName, parseOutline, mergeOutline, computePlan, planLine, chapterLabel, noteTitle, parseQuestions, choiceIndex,
+module.exports = { TYPES, DEFAULT_SCORE, OBJECTIVE, DATA_NOTE, safeName, parseOutline, computePlan, planLine, chapterLabel, posOf, aiChapter, noteTitle, parseQuestions, choiceIndex,
   publicQuestions, normAnswer, gradeObjective, parseGrades, isWrong, answerText, correctText, renderOutline, renderWrongBook, chunks, pickPassages,
   outlinePrompt, lessonPrompt, followupPrompt, pendingQuestion, threadsOf, quizPrompt, gradePrompt, hintPrompt, hintLeaks, rulesBlock, LEVELS, START, stepLevel, levelOf, chapterLevel, parseJudge, notesMaterial, LEARN_RULES, reviewPrompt, parseReview, applyFixes, findQuote, REVIEW_LEVELS, localDate, addDays, daysBetween, wd };

@@ -223,6 +223,15 @@
         <div class="row"><span class="lbl">章節</span><span id="ltOutlineState" class="hint"></span></div>
         <ul id="ltChapters" class="chapters"></ul>
         <button type="button" id="ltGenOutline">產生大綱</button>
+        <div id="ltOrBox" class="review orbox" hidden>
+          <div class="lbl">📝 大綱建議</div>
+          <p id="ltOrStatus" class="hint left"></p>
+          <ul id="ltOrList" class="rvlist"></ul>
+          <div id="ltOrActions" class="rvbtns nokiosk" hidden>
+            <button type="button" id="ltOrApply" class="primary">套用勾選的建議</button>
+            <button type="button" id="ltOrIgnore">勾選的不用改</button>
+          </div>
+        </div>
       </div>
       <details class="box" id="ltMatBox">
         <summary><span class="lbl">📎 教材</span> <span id="ltMatCount" class="hint"></span></summary>
@@ -248,6 +257,7 @@
       <button class="back" type="button" data-lback="lnTopic">← 章節</button>
       <h2 id="llTitle"></h2>
       <div id="llStatus" class="status" hidden></div>
+      <div id="llSupp" class="box supp" hidden></div>
       <article id="llBody" class="md"></article>
       <div id="llChat"></div>
       <p id="llLevel" class="hint left" hidden></p>

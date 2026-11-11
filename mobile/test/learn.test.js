@@ -10,9 +10,6 @@ assert(L.safeName('../資料庫/基礎') === '資料庫 基礎' && L.safeName('.
 const out = '好的，大綱如下：\nCHAPTER: 第1章：關聯模型 | 資料表；主鍵；外鍵 | 講義 p.1-10\n- CHAPTER: 正規化 | 1NF；2NF；3NF\nCHAPTER:   \nCHAPTER: 索引 | B+ 樹；雜湊 | ';
 const ch = L.parseOutline(out);
 assert(ch.length === 3 && ch[0].title === '關聯模型' && ch[0].points.join() === '資料表,主鍵,外鍵' && ch[0].source === '講義 p.1-10' && ch[2].n === 3 && ch[1].source === '', 'outline parsed (prefix "第1章" stripped, empty dropped)');
-ch[1].status = 'done'; ch[1].note = '第2章 正規化.md';
-const merged = L.mergeOutline(ch, L.parseOutline('CHAPTER: 關聯模型 | x\nCHAPTER: 正 規化 | y\nCHAPTER: 交易 | z'));
-assert(merged[1].status === 'done' && merged[1].note === '第2章 正規化.md' && merged[2].status === 'todo', 'regenerated outline keeps done chapters');
 
 // study plan
 const chs = [1, 2, 3, 4, 5, 6].map((n) => ({ n, title: 'C' + n, points: [], status: n === 1 ? 'done' : 'todo' }));
@@ -62,6 +59,20 @@ const wb = L.renderWrongBook(topic);
 assert(wb.includes('## 待複習（1）') && wb.includes('## 已熟練（1）') && wb.includes('A. id\nB. name') && wb.includes('- 正確答案：(A) id'), 'wrong-answer book rendered');
 assert(![om, wb].some((s) => /- \[[ xX]\]|📅/.test(s)), 'no "- [ ]" or 📅 in system files (待辦 tab / Tasks plugin stay clean)');
 
+// chapter ids are permanent, the shown number is the position: ids [1,2,6,3,4,5] still read 第1～6章
+const ids = [1, 2, 6, 3, 4, 5].map((n) => ({ n, title: 'K' + n, points: ['p' + n], status: 'todo' }));
+const it = { ...topic, chapters: ids, wrong: [{ ...topic.wrong[0], chapter: 6 }], levels: { 6: { level: 4, sc: 0, sw: 0 } } };
+assert(L.posOf(ids, 6) === 3 && L.posOf(ids, 3) === 4 && L.posOf(ids, 9) === null, 'position of a chapter id');
+const io = L.renderOutline(it, { today: '2026-11-10', noteLink: (f) => f });
+assert(io.includes('第3章 K6') && io.includes('第6章 K5') && !io.includes('第6章 K6') && !/第[7-9]章/.test(io), 'outline note numbers chapters by position');
+const fo = L.renderOutline({ ...it, chapters: [{ ...ids[0], fresh: ['VLAN'] }, ...ids.slice(1)], outlineLog: [{ at: '2026-11-11T20:00', materials: ['講義.txt'], changes: ['新增章節「VLAN」', '「K1」補充重點：VLAN'] }] }, { today: '2026-11-10', noteLink: (f) => f });
+assert(fo.includes('第1章 K1 🆕') && fo.includes('🆕 新教材補充（還沒上到）：VLAN') && fo.includes('## 大綱調整紀錄\n\n- 2026-11-11 20:00（依 講義.txt）：新增章節「VLAN」；「K1」補充重點：VLAN') && !/- \[[ xX]\]|📅/.test(fo), 'outline note: 🆕 chapters and the adjustment log');
+assert(L.renderWrongBook(it).includes('｜第3章　') && L.planLine({ kind: 'study', chapters: [6, 3] }, ids) === '第3章 K6、第4章 K3', 'wrong-answer book and plan line use positions');
+assert(L.lessonPrompt(it, ids[2], {}).includes('第 3 章「K6」') && L.lessonPrompt(it, ids[2], {}).includes('3. K6／4. K3'), 'lesson prompt: position and course order');
+assert(L.followupPrompt(it, ids[2], '', [], '問').includes('剛教完第 3 章「K6」'), 'follow-up prompt uses the position');
+const iq = L.quizPrompt(it, { counts: { choice: 1 }, difficulty: 'auto', scope: [6] });
+assert(iq.includes('[代號 6] 第3章「K6」（p6）') && iq.includes('[代號 6] 第3章「K6」 Level 4') && iq.includes('「代號」數字'), 'quiz prompt names chapters by id and position, asks for the id');
+
 // material passages: relevant chunks first, within budget, labelled
 const docs = [{ name: '講義.txt', text: Array.from({ length: 30 }, (_, i) => i === 17 ? '交易的 ACID 特性：原子性、一致性、隔離性、持久性。' + 'x'.repeat(900) : `第${i}段 其他內容 ` + 'y'.repeat(1100)).join('\n\n') }];
 const pp = L.pickPassages(docs, '交易 ACID 隔離性', 3000);
@@ -70,7 +81,7 @@ assert(L.pickPassages([{ name: 'a', text: '短' }], 'x', 3000).includes('短'), 
 
 // prompts carry the key settings
 const qp = L.quizPrompt(topic, { counts: { choice: 3, essay: 1, fill: 0 }, difficulty: 'hard', mimic: true, scope: [2, 3], pastText: '考古題內容', materialsText: '教材內容', wrongItems: [topic.wrong[0]] });
-assert(qp.includes('選擇 3 題、申論 1 題') && !qp.includes('填空 0') && qp.includes('Level 4（進階變形）') && qp.includes('2. C2') && !qp.includes('1. C1（') && qp.includes('考古題內容') && qp.includes('[w1]'), 'quiz prompt: counts, difficulty, scope, past exams, wrong answers');
+assert(qp.includes('選擇 3 題、申論 1 題') && !qp.includes('填空 0') && qp.includes('Level 4（進階變形）') && qp.includes('[代號 2] 第2章「C2」') && !qp.includes('「C1」（') && qp.includes('考古題內容') && qp.includes('[w1]'), 'quiz prompt: counts, difficulty, scope, past exams, wrong answers');
 assert(L.notesMaterial(topic, { chapter: chs[1], notes: '我的理解', lesson: '老師講', chat: [{ q: '為何', a: '因為' }] }).includes('===== 我的筆記 =====\n我的理解'), 'notes material puts the user\'s notes first');
 
 // the user's requirements reach every prompt that should follow them
@@ -100,7 +111,7 @@ assert(L.stepLevel({ level: 2, sc: 1, sw: 0 }, 'wrong').st.sc === 0, 'a wrong an
 assert(L.levelOf('easy') === 2 && L.levelOf('hard') === 4 && L.levelOf('5') === 5 && L.levelOf('auto') === 'auto' && L.levelOf('x') === 3, 'difficulty settings -> levels (old easy/medium/hard kept)');
 const at = { ...topic, levels: { 2: { level: 4, sc: 0, sw: 0 } } };
 const ap = L.quizPrompt(at, { counts: { choice: 2 }, difficulty: 'auto', scope: [2, 3] });
-assert(ap.includes('第2章 Level 4、第3章 Level 2') && ap.includes('Level 4（進階變形）：') && ap.includes('Level 2（標準入門）：') && !ap.includes('Level 5（'), 'auto difficulty: per-chapter levels and only the definitions used');
+assert(ap.includes('[代號 2] 第2章「C2」 Level 4、[代號 3] 第3章「C3」 Level 2') && ap.includes('Level 4（進階變形）：') && ap.includes('Level 2（標準入門）：') && !ap.includes('Level 5（'), 'auto difficulty: per-chapter levels and only the definitions used');
 const fp = L.followupPrompt(rt, chs[0], '', [], '答案', { level: 3, sc: 1, sw: 0 });
 assert(fp.includes('目前是 Level 3') && fp.includes('這是連續第 2 題答對') && fp.includes('會難一點') && fp.includes('🤔 再試一次') && fp.includes('不要再出新的小問題'), 'follow-up: branches precomputed from the state (up next / retry), no new question after an answer');
 assert(L.followupPrompt(rt, chs[0], '', [], 'x', { level: 3, sc: 0, sw: 1 }).includes('會簡單一點'), 'follow-up: second wrong branch goes down a level');
@@ -165,6 +176,6 @@ const autoP = L.followupPrompt(rt, chs[0], '', tc, 'x', { level: 2, sc: 0, sw: 0
 assert(autoP.includes('先判斷') && autoP.includes('「外鍵指向哪裡？」') && autoP.includes('JUDGE: none'), 'mode auto: the AI decides, told which small question is pending');
 
 // notes saved into the vault: named after the subject, no chapter numbers
-assert(L.noteTitle({ n: 3, title: '網路初探：拓撲與元件' }) === '網路初探：拓撲與元件' && L.noteTitle({ n: 2, title: ' ' }) === '第2章  ', 'note title = chapter subject only (number only as a last resort)');
+assert(L.noteTitle({ n: 3, title: '網路初探：拓撲與元件' }) === '網路初探：拓撲與元件' && L.noteTitle({ n: 2, title: ' ' }) === '未命名章節', 'note title = chapter subject only, never a chapter number');
 const lr = L.LEARN_RULES(topic, { n: 3, title: '網路初探' }), nm = L.notesMaterial(topic, { chapter: { n: 3, title: '網路初探' }, notes: 'x' });
 assert(!/第 ?3 ?章/.test(lr) && !/第 ?3 ?章/.test(nm) && lr.includes('不要寫「第幾章」') && lr.includes('「網路初探」'), 'organizer told not to write chapter numbers; material has none');

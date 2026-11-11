@@ -23,6 +23,7 @@ const series = require('./lib/series');
 const learn = require('./lib/learn');
 const htmltext = require('./lib/htmltext');
 const rules = require('./lib/rules');
+const outline = require('./lib/outline');
 
 // ---------- config ----------
 const ROOT = __dirname;
@@ -825,8 +826,17 @@ function learnJob(label, fn) {
   return p;
 }
 
+// chapter ids that have a lesson file (any status): those chapters count as studied, and their ids are never reused
+const lessonIds = (id) => { try { return fs.readdirSync(metaDir(id)).map((f) => (f.match(/^lesson-(\d+)\.json$/) || [])[1]).filter(Boolean).map(Number); } catch { return []; } };
+const readyMaterials = (t) => t.materials.filter((m) => m.status === 'ready').map((m) => m.file);
+
+// the first outline only: once chapters exist, they change through suggestions (a full regeneration would renumber them)
 async function startOutline(id) {
-  await updateTopic(id, (t) => { if (t.outline && t.outline.status === 'processing') throw httpErr(409, '大綱正在產生中'); t.outline = { status: 'processing', error: '', at: new Date().toISOString() }; });
+  await updateTopic(id, (t) => {
+    if (t.outline && t.outline.status === 'processing') throw httpErr(409, '大綱正在產生中');
+    if (t.chapters.length) throw httpErr(409, '大綱已經有了：要依教材調整，請按「依教材檢查大綱」');
+    t.outline = { status: 'processing', error: '', at: new Date().toISOString() };
+  });
   learnJob('outline ' + id, async () => {
     try {
       const t = await loadTopic(id);
@@ -838,9 +848,94 @@ async function startOutline(id) {
       const out = web ? await ai.research({ prompt, model: CFG.agentModel, cwd: AGENT_CWD, timeoutMs: CFG.agentTimeoutMs }) : await askLearn(prompt, { pdfs: pdfs.length > 0, t });
       const ch = learn.parseOutline(out);
       if (!ch.length) throw new Error('AI 沒有產生大綱：' + String(out).slice(0, 150));
-      await updateTopic(id, (x) => { x.chapters = learn.mergeOutline(x.chapters, ch); x.outline = { status: 'ready', error: '', at: new Date().toISOString(), web, fromMaterials }; x.updated = new Date().toISOString(); });
+      await updateTopic(id, (x) => {
+        if (x.chapters.length) throw new Error('大綱已經有了');
+        const ids = outline.idAllocator(x, lessonIds(id));
+        x.chapters = ch.map((c) => ({ ...c, n: ids.next() }));
+        x.outlineMaterials = readyMaterials(t);                       // what this outline already covers
+        x.outline = { status: 'ready', error: '', at: new Date().toISOString(), web, fromMaterials }; x.updated = new Date().toISOString();
+      });
     } catch (e) { await updateTopic(id, (x) => { x.outline = { status: 'error', error: e.message.slice(0, 300) }; }).catch(() => {}); throw e; }
   });
+}
+
+// ---- outline suggestions: new materials -> AI suggests changes -> the user applies the ones they want ----
+// results live in their own file (not topic.json), tagged with a run id; a newer run or a deleted topic discards an old result
+const outlineReviewFile = (id) => path.join(metaDir(id), 'outline-review.json');
+async function loadOutlineReview(id) { try { return await readJsonFile(outlineReviewFile(id)); } catch { return null; } }
+let outlineReviewWrite = Promise.resolve();
+function updateOutlineReview(id, fn) {
+  const job = outlineReviewWrite.then(async () => {
+    if (!fs.existsSync(path.join(metaDir(id), 'topic.json'))) return null;      // topic deleted meanwhile: write nothing
+    const r = (await loadOutlineReview(id)) || { status: 'none', items: [] }; const out = fn(r);
+    if (out === false) return r;
+    await writeJson(outlineReviewFile(id), r); return r;
+  });
+  outlineReviewWrite = job.catch(() => {});
+  return job;
+}
+// materials not yet looked at by an outline: older topics have no list, so anything added after their outline counts as new
+const newMaterials = (t) => t.materials.filter((m) => m.status === 'ready' && (t.outlineMaterials ? !t.outlineMaterials.includes(m.file) : !t.outline || !t.outline.at || (m.added || '') > t.outline.at));
+// all = check against every material (the button); otherwise only the new ones (after an upload; nothing new = nothing to do)
+async function startOutlineReview(id, { all = false } = {}) {
+  const t0 = await loadTopic(id);
+  if (!t0.chapters.length) throw httpErr(409, '還沒有大綱，請先按「產生大綱」');
+  const run = crypto.randomBytes(5).toString('hex');
+  await updateOutlineReview(id, (r) => { if (r.status === 'processing' && all) throw httpErr(409, '大綱正在檢查中'); Object.assign(r, { status: 'processing', run, error: '', all }); });
+  learnJob('outline review ' + id, async () => {
+    const t = await loadTopic(id).catch(() => null); if (!t) return;
+    const mats = all ? t.materials.filter((m) => m.status === 'ready') : newMaterials(t);
+    const done = (fields) => updateOutlineReview(id, (r) => { if (r.run !== run) return false; Object.assign(r, fields); });
+    try {
+      if (!mats.length) { await done({ status: r0Status(await loadOutlineReview(id)), error: all ? '還沒有教材可以對照' : '' }); return; }
+      const names = mats.map((m) => m.file);
+      const docs = (await materialDocs(t)).filter((d) => names.includes(d.name));
+      const pdfs = pdfsOf(t).filter((m) => names.includes(m.file));
+      const query = t.title + '\n' + t.chapters.map((c) => c.title + ' ' + c.points.join(' ')).join('\n');
+      const locked = outline.lockedIds(t, lessonIds(id));
+      const prompt = outline.reviewPrompt(t, { locked, materialsText: docs.length ? learn.pickPassages(docs, query, 20000) : '', pdfNote: pdfNote(t, pdfs), newNames: names, all });
+      const items = outline.toItems(outline.parseSuggestions(await askLearn(prompt, { pdfs: pdfs.length > 0, t })), t.chapters, locked, () => 'o' + crypto.randomBytes(4).toString('hex'));
+      // earlier suggestions still waiting stay; the new ones come after them
+      const ok = await updateOutlineReview(id, (r) => {
+        if (r.run !== run) return false;
+        Object.assign(r, { status: 'ready', error: '', at: new Date().toISOString(), materials: names, items: (r.items || []).filter((x) => x.state === 'open').concat(items.map((x) => ({ ...x, materials: names }))) });
+      });
+      if (ok && ok.run === run) await updateTopic(id, (x) => { x.outlineMaterials = [...new Set((x.outlineMaterials || readyMaterials(x).filter((f) => !newMaterials(x).some((m) => m.file === f))).concat(names))]; });
+    } catch (e) { await done({ status: 'error', error: e.message.slice(0, 300) }); throw e; }
+  });
+}
+// nothing new to check: back to whatever the panel showed before (open suggestions stay visible)
+const r0Status = (r) => (r && (r.items || []).length ? 'ready' : 'none');
+// apply / ignore / reopen chosen suggestions; applying re-checks every lock against the topic as it is now
+async function outlineReviewAction(id, ids, action) {
+  const r = await loadOutlineReview(id);
+  if (!r || r.status === 'processing') throw httpErr(409, r ? '大綱正在檢查中，請稍候' : '沒有大綱建議');
+  const chosen = (r.items || []).filter((x) => ids.includes(x.id));
+  if (!chosen.length) throw httpErr(400, '請勾選建議');
+  let res = { applied: [], skipped: [] };
+  if (action === 'apply') {
+    res = await updateTopic(id, (t) => {
+      const ids2 = outline.idAllocator(t, lessonIds(id));
+      const out = outline.applySuggestions(t.chapters, chosen.filter((x) => x.state === 'open'), { locked: outline.lockedIds(t, lessonIds(id)), newId: ids2.next });
+      if (out.applied.length) {
+        t.chapters = out.chapters;
+        const mats = [...new Set(chosen.filter((x) => out.applied.includes(x.id)).flatMap((x) => x.materials || []))];
+        t.outlineLog = outline.logEntry(t.outlineLog, { at: localISO(new Date()), materials: mats, changes: out.changes });
+        t.updated = new Date().toISOString();
+      }
+      return out;
+    });
+  }
+  const skippedIds = new Map(res.skipped.map((x) => [x.id, x.reason]));
+  await updateOutlineReview(id, (x) => {
+    for (const it of x.items || []) {
+      if (!ids.includes(it.id)) continue;
+      if (action === 'apply') { if (res.applied.includes(it.id)) it.state = 'applied'; else if (skippedIds.has(it.id)) it.blocked = skippedIds.get(it.id); }
+      else if (action === 'ignore' && it.state === 'open') it.state = 'ignored';
+      else if (action === 'reopen' && it.state === 'ignored') it.state = 'open';
+    }
+  });
+  return { applied: res.applied.length, skipped: res.skipped };
 }
 
 const lessonFile = (id, n) => path.join(metaDir(id), `lesson-${n}.json`);
@@ -862,8 +957,36 @@ async function startLesson(id, n) {
       const prompt = learn.lessonPrompt(t, c, { web, related: relatedContext(c.title + '\n' + c.points.join('\n') + '\n' + t.title) });
       const out = web ? await ai.research({ prompt, model: CFG.agentModel, cwd: AGENT_CWD, timeoutMs: CFG.agentTimeoutMs }) : await ai.plain({ prompt, model: CFG.bigModel, timeoutMs: CFG.agentTimeoutMs });
       if (!String(out).trim()) throw new Error('AI 沒有產生內容');
-      await updateLesson(id, c.n, (l) => { l.status = 'ready'; l.content = String(out).trim(); l.web = web; l.at = new Date().toISOString(); });
+      await updateLesson(id, c.n, (l) => { l.status = 'ready'; l.content = String(out).trim(); l.web = web; l.at = new Date().toISOString(); l.supp = null; });
+      await clearFresh(id, c.n, c.points);
     } catch (e) { await updateLesson(id, c.n, (l) => { l.status = 'error'; l.error = e.message.slice(0, 300); }); throw e; }
+  });
+}
+// 🆕 points that a lesson now covers are no longer new (points added while it was being written stay marked)
+const clearFresh = (id, n, covered) => updateTopic(id, (x) => {
+  const y = x.chapters.find((c) => c.n === n); if (!y || !y.fresh) return;
+  y.fresh = y.fresh.filter((p) => !covered.includes(p)); if (!y.fresh.length) delete y.fresh;
+}).catch((e) => log('clear fresh failed', e.message));
+// supplementary lesson for a studied chapter that gained points: appended to the lesson; its own status, so a failure never hides the lesson
+async function startSupplement(id, n) {
+  const t = await loadTopic(id); const c = chapterOf(t, n);
+  if (!(c.fresh || []).length) throw httpErr(400, '這一章沒有新的內容要補');
+  await updateLesson(id, c.n, (l) => {
+    if (l.status !== 'ready') throw httpErr(409, '這一章還沒上過課，直接上課就會包含新的內容');
+    if (l.supp && l.supp.status === 'processing') throw httpErr(409, '正在補充中');
+    l.supp = { status: 'processing', error: '', at: new Date().toISOString() };
+  });
+  learnJob(`supplement ${id} ${c.n}`, async () => {
+    try {
+      const l = await loadLesson(id, c.n);
+      const web = agentAvailable();
+      const docs = await materialDocs(t);
+      const prompt = outline.supplementPrompt(t, c, { lesson: l && l.content, web, materialsText: docs.length ? learn.pickPassages(docs, c.title + ' ' + c.fresh.join(' '), 12000) : '' });
+      const out = String(web ? await ai.research({ prompt, model: CFG.agentModel, cwd: AGENT_CWD, timeoutMs: CFG.agentTimeoutMs }) : await ai.plain({ prompt, model: CFG.bigModel, timeoutMs: CFG.agentTimeoutMs })).trim();
+      if (!out) throw new Error('AI 沒有產生內容');
+      await updateLesson(id, c.n, (x) => { x.content = String(x.content || '').trim() + `\n\n---\n\n## 🆕 補充：新教材的內容（${today()}）\n\n` + out; x.supp = { status: 'ready', error: '', at: new Date().toISOString() }; });
+      await clearFresh(id, c.n, c.fresh);
+    } catch (e) { await updateLesson(id, c.n, (x) => { x.supp = { status: 'error', error: e.message.slice(0, 300) }; }); throw e; }
   });
 }
 // mode: 'auto' (AI decides), 'ask' (new question), 'answer' (answer to the pending small question), 'more' (one more small question)
@@ -910,7 +1033,7 @@ async function startQuiz(id, settings, lessonN) {
   const t = await loadTopic(id);
   const qid = crypto.randomBytes(5).toString('hex');
   const lessonCh = lessonN ? chapterOf(t, lessonN) : null;
-  const label = lessonCh ? `第${lessonCh.n}章小測驗` : settings.wrongOnly ? '錯題練習' : '應考測驗';
+  const label = lessonCh ? `${lessonCh.title} 小測驗` : settings.wrongOnly ? '錯題練習' : '應考測驗';
   const z = { id: qid, topic: id, at: new Date().toISOString(), label, mode: lessonCh ? 'lesson' : 'exam', chapter: lessonCh ? lessonCh.n : null, settings, status: 'processing', questions: [], answers: null, grades: null, notes: '' };
   await writeJson(quizFile(id, qid), z);
   await updateTopic(id, (x) => { x.quizzes = (x.quizzes || []).concat([{ id: qid, at: z.at, label, graded: false }]).slice(-200); if (!lessonCh) x.quizRules = settings.rules || ''; });   // last 出題要求 is prefilled next time
@@ -931,6 +1054,9 @@ async function startQuiz(id, settings, lessonN) {
           pdfNote: pdfNote(t, pdfs), wrongItems });
       }
       const qs = learn.parseQuestions(await askLearn(prompt, { pdfs: pdfs.length > 0, t })).slice(0, MAX_Q);
+      // a question's chapter must be a chapter id that was in range; anything else (e.g. a position the AI wrote) is dropped
+      const ids = lessonCh ? [lessonCh.n] : (settings.scope.length ? settings.scope : t.chapters.map((c) => c.n));
+      for (const q of qs) if (lessonCh) q.chapter = lessonCh.n; else if (!ids.includes(q.chapter)) q.chapter = null;
       if (!qs.length) throw new Error('AI 沒有產生可用的題目，請再試一次');
       await updateQuiz(id, qid, (x) => { x.questions = qs; x.status = 'ready'; });
     } catch (e) { await updateQuiz(id, qid, (x) => { x.status = 'error'; x.error = e.message.slice(0, 300); }); throw e; }
@@ -1105,7 +1231,9 @@ async function addMaterials(id, form) {
     } catch (e) { status = 'error'; error = e.message.slice(0, 200); }
     await updateTopic(id, (x) => { const y = x.materials.find((z) => z.file === m.file); if (y) Object.assign(y, { status, error }); });
   });
-  return { added: added.map((x) => x.file), skipped };
+  // an outline exists: look at what the new materials add (queued after the transcriptions above, so it sees their text)
+  const outlineCheck = t.chapters.length ? await startOutlineReview(id).then(() => true, (e) => { log('outline review not started', e.message); return false; }) : false;
+  return { added: added.map((x) => x.file), skipped, outlineCheck };
 }
 
 // daily study-plan push (and the plan in 大綱.md refreshed), once per topic per day
@@ -1986,6 +2114,7 @@ async function route(req, res) {
           for (const c of t.chapters) { const l = await loadLesson(tid, c.n); if (l) lessons[c.n] = l.status; }
           const plan = t.examDate ? learn.computePlan({ chapters: t.chapters, examDate: t.examDate, today: today() }).days.map((d) => ({ date: d.date, kind: d.kind, line: learn.planLine(d, t.chapters) })) : [];
           return send(res, 200, { ...t, wrong: t.wrong.map((w) => ({ id: w.id, status: w.status, chapter: w.chapter })), summary: topicSummary(t), lessons, plan, web: agentAvailable(), pdf: CFG.provider === 'claude',
+            outlineReview: await loadOutlineReview(tid), newMaterials: newMaterials(t).map((m) => m.file),
             links: { outline: learnLink(tid)('大綱.md', true), wrong: learnLink(tid)('錯題本.md', true) } });
         }
         if (M === 'PUT') {
@@ -2005,7 +2134,13 @@ async function route(req, res) {
           return send(res, 200, { ok: true });
         }
       }
-      if (tid && p[4] === 'outline' && M === 'POST') { await startOutline(tid); return send(res, 202, { ok: true }); }
+      if (tid && p[4] === 'outline' && !p[5] && M === 'POST') { await startOutline(tid); return send(res, 202, { ok: true }); }
+      if (tid && p[4] === 'outline' && p[5] === 'check' && M === 'POST') { await startOutlineReview(tid, { all: true }); return send(res, 202, { ok: true }); }
+      if (tid && p[4] === 'outline' && p[5] === 'apply' && M === 'POST') {
+        const b = await readJson(req);
+        if (!['apply', 'ignore', 'reopen'].includes(b.action)) throw httpErr(400, 'bad action');
+        return send(res, 200, await outlineReviewAction(tid, (Array.isArray(b.ids) ? b.ids : []).map(String), b.action));
+      }
       if (tid && p[4] === 'materials' && M === 'POST') return send(res, 200, await addMaterials(tid, await readForm(req)));
       if (tid && p[4] === 'materials' && p[5] && M === 'DELETE') {
         const file = learn.safeName(p[5], 90);
@@ -2022,8 +2157,9 @@ async function route(req, res) {
       if (tid && p[4] === 'lesson' && p[5]) {
         const n = +p[5];
         if (!p[6] && M === 'GET') { const t = await loadTopic(tid); const c = chapterOf(t, n); const l = await loadLesson(tid, n);
-          return send(res, 200, { chapter: c, level: learn.chapterLevel(t, n), lesson: l, threads: learn.threadsOf(l && l.chat), pending: learn.pendingQuestion(l && l.chat) }); }
+          return send(res, 200, { chapter: c, pos: learn.posOf(t.chapters, n), level: learn.chapterLevel(t, n), lesson: l, threads: learn.threadsOf(l && l.chat), pending: learn.pendingQuestion(l && l.chat) }); }
         if (!p[6] && M === 'POST') { await startLesson(tid, n); return send(res, 202, { ok: true }); }
+        if (p[6] === 'supplement' && M === 'POST') { await startSupplement(tid, n); return send(res, 202, { ok: true }); }
         if (p[6] === 'ask' && M === 'POST') {
           const b = await readJson(req), more = !!b.more;
           const mode = more ? 'more' : ['ask', 'answer'].includes(b.mode) ? b.mode : 'auto';
@@ -2281,10 +2417,11 @@ if (rules.ensureLocal(CFG.localPromptFile)) log('created', CFG.localPromptFile);
   for (const t of await listTopics().catch(() => [])) {
     try {
       if (t.outline && t.outline.status === 'processing') await updateTopic(t.id, (x) => { x.outline = { status: 'error', error: '伺服器重新啟動，請再按一次「產生大綱」' }; });
+      await updateOutlineReview(t.id, (r) => { if (r.status !== 'processing') return false; Object.assign(r, { status: 'error', error: '伺服器重新啟動，檢查中斷，請按「依教材檢查大綱」' }); });
       if (t.materials.some((m) => m.status === 'processing')) await updateTopic(t.id, (x) => { for (const m of x.materials) if (m.status === 'processing') Object.assign(m, { status: 'error', error: '伺服器重新啟動，請刪掉重傳' }); });
       for (const f of await fsp.readdir(metaDir(t.id)).catch(() => [])) {
         const lm = f.match(/^lesson-(\d+)\.json$/), qm = f.match(/^quiz-([a-z0-9]+)\.json$/);
-        if (lm) await updateLesson(t.id, +lm[1], (l) => { if (l.status === 'processing') Object.assign(l, { status: 'error', error: '伺服器重新啟動，請重新準備這一章' }); if (l.asking) l.asking = null; });
+        if (lm) await updateLesson(t.id, +lm[1], (l) => { if (l.status === 'processing') Object.assign(l, { status: 'error', error: '伺服器重新啟動，請重新準備這一章' }); if (l.asking) l.asking = null; if (l.supp && l.supp.status === 'processing') l.supp = { status: 'error', error: '伺服器重新啟動，請再按一次「補上新內容」' }; });
         if (qm) await updateQuiz(t.id, qm[1], (z) => { if (z.status === 'processing') Object.assign(z, { status: 'error', error: '伺服器重新啟動，請重新出題' }); if (z.status === 'grading') Object.assign(z, { status: 'ready', error: '伺服器重新啟動，請再交一次卷' }); });
       }
     } catch (e) { log('learn recover', t.id, e.message); }
