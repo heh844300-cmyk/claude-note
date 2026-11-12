@@ -11,14 +11,17 @@
 </head>
 <body>
 <header>
-  <h1>Claude 筆記</h1>
+  <div class="hrow">
+    <h1>Claude 筆記</h1>
+    <button type="button" id="setBtn" class="setbtn nokiosk" data-go="settings">⚙️ 設定・通知</button>
+  </div>
   <nav>
-    <button data-tab="new" class="active">新增</button>
-    <button data-tab="drafts">草稿 <span id="draftCount" class="badge" hidden></span></button>
-    <button data-tab="notes">已上傳</button>
-    <button data-tab="tasks">待辦 <span id="taskCount" class="badge" hidden></span></button>
-    <button data-tab="learn">學習</button>
-    <button data-tab="vault">筆記庫</button>
+    <button data-tab="new" class="active"><span class="ic">✍️</span>記錄</button>
+    <button data-tab="drafts"><span class="ic">📥</span>草稿<span id="draftCount" class="badge" hidden></span></button>
+    <button data-tab="notes"><span class="ic">📒</span>筆記</button>
+    <button data-tab="tasks"><span class="ic">✅</span>待辦<span id="taskCount" class="badge" hidden></span></button>
+    <button data-tab="learn"><span class="ic">🎓</span>學習</button>
+    <button data-tab="vault"><span class="ic">🔍</span>搜尋</button>
   </nav>
 </header>
 <div id="kioskBar" class="kiosk" hidden>
@@ -29,6 +32,24 @@
 <main>
   <!-- 新增 -->
   <section id="tab-new" class="tab">
+    <div id="welcome" class="box welcome nokiosk" hidden>
+      <div class="lbl">👋 這個 App 可以做這些事</div>
+      <div class="wgrid">
+        <button type="button" data-go="new"><b>✍️ 記錄</b><span>文字、照片、錄音交給 AI 整理成筆記</span></button>
+        <button type="button" data-go="drafts"><b>📥 草稿</b><span>AI 整理好的先放這裡，你確認才存</span></button>
+        <button type="button" data-go="notes"><b>📒 筆記</b><span>看存好的筆記，讓 AI 上網查資料</span></button>
+        <button type="button" data-go="tasks"><b>✅ 待辦</b><span>所有筆記裡你還沒做完的事</span></button>
+        <button type="button" data-go="learn"><b>🎓 學習</b><span>準備考試：AI 上課、出題、批改</span></button>
+        <button type="button" data-go="vault"><b>🔍 搜尋</b><span>找整個筆記庫裡的任何筆記</span></button>
+      </div>
+      <p class="hint left">提醒通知、手機連線在右上角的「⚙️ 設定・通知」。</p>
+      <button type="button" id="welcomeOk" class="primary wide">知道了，開始記錄</button>
+    </div>
+    <ol class="flow" aria-label="使用流程">
+      <li><b>1</b>輸入文字、照片、錄音</li>
+      <li><b>2</b>AI 整理成📥草稿</li>
+      <li><b>3</b>你確認後存成📒筆記</li>
+    </ol>
     <form id="newForm">
       <textarea id="newText" name="text" rows="9" placeholder="輸入或貼上筆記、想法…&#10;（可以用鍵盤上的麥克風語音輸入）"></textarea>
       <div class="pickers">
@@ -37,12 +58,18 @@
         <label class="pick">📄 文字檔<input type="file" id="pickTxt" accept=".txt,.md,text/plain" multiple></label>
       </div>
       <ul id="fileList" class="files"></ul>
-      <label class="field" id="newSeriesRow" hidden>📌 接續到
+      <label class="field" id="newSeriesRow" hidden>📌 要接在哪篇持續追蹤的筆記後面？（例如每週例會的進度）
         <select id="newSeries"></select>
       </label>
       <button type="submit" class="primary" id="submitBtn">交給 Claude 整理</button>
-      <p class="hint">送出後可以關掉 app，整理好的草稿會出現在「草稿」。</p>
+      <p class="hint">送出後可以關掉 app，整理好的草稿會出現在「📥 草稿」。</p>
     </form>
+  </section>
+
+  <!-- 設定：通知、連線、登入的裝置 -->
+  <section id="tab-settings" class="tab" hidden>
+    <button class="back" data-back="new">← 記錄</button>
+    <h2>⚙️ 設定・通知</h2>
     <div class="box" id="linksBox" hidden>
       <div class="row"><span class="lbl">🔗 連線網址</span></div>
       <div id="linksNone" class="hint left" hidden>還沒設定手機和公用電腦的連線。重新執行 setup.cmd，在第 6 步「手機和外出使用」選 Y。</div>
@@ -65,18 +92,33 @@
       <ul id="sessList" class="sess"></ul>
       <button type="button" id="logoutBtn" hidden>登出這台裝置</button>
     </div>
+    <div class="box nokiosk" id="mailBox">
+      <div class="row"><span class="lbl">✉️ 信箱（Gmail）</span><button type="button" id="mailScan" class="small">現在檢查一次</button></div>
+      <div id="mailInfo" class="hint left"></div>
+    </div>
+    <details class="box nokiosk" id="cfgBox">
+      <summary><span class="lbl">🛠️ 功能開關與調整</span></summary>
+      <p class="hint left">改完按最下面的「儲存設定」，馬上生效，不用重新啟動。這裡存的是這台電腦的 <code>mobile/config.json</code>。</p>
+      <div id="cfgForm"></div>
+      <button type="button" id="cfgSave" class="primary wide">儲存設定</button>
+    </details>
+    <button type="button" id="welcomeAgain" class="wide">👋 再看一次功能介紹</button>
   </section>
 
   <!-- 草稿列表 -->
   <section id="tab-drafts" class="tab" hidden>
     <button type="button" id="upAllBtn" class="primary wide nokiosk" hidden></button>
     <ul id="draftList" class="list"></ul>
-    <p id="draftEmpty" class="empty" hidden>目前沒有草稿</p>
+    <div id="draftEmpty" class="empty guide" hidden>
+      <p><b>目前沒有草稿</b></p>
+      <p>在「✍️ 記錄」送出的內容，AI 整理好會先放在這裡。你看過、改好再存進筆記庫，AI 不會自己寫進去。</p>
+      <button type="button" data-go="new" class="primary">去記錄</button>
+    </div>
   </section>
 
   <!-- 草稿編輯 -->
   <section id="tab-edit" class="tab" hidden>
-    <button class="back" data-back="drafts">← 草稿</button>
+    <button class="back" data-back="drafts">← 📥 草稿</button>
     <div id="editStatus" class="status" hidden></div>
     <div id="groupBox" class="box group" hidden>
       <div id="groupText" class="hint left"></div>
@@ -148,13 +190,13 @@
     </div>
     <div id="dedupBox" class="box nokiosk" hidden>
       <div class="row"><span class="lbl">🧹 重複的名詞筆記</span><span id="dedupState" class="hint"></span></div>
-      <p class="hint left">找出「其實是同一個概念」的名詞筆記或灰色連結（例如 PARA方法 和 PARA）。確認後才合併：內容併進保留的那篇，所有連結改連過去（畫面上的字不變），重複的那篇移到 .trash。每週也會自動掃一次。</p>
+      <details class="what"><summary>這是什麼？</summary><p class="hint left">找出「其實是同一個概念」的名詞筆記或灰色連結（例如 PARA方法 和 PARA）。確認後才合併：內容併進保留的那篇，所有連結改連過去（畫面上的字不變），重複的那篇移到 .trash。每週也會自動掃一次。</p></details>
       <button type="button" id="dedupScan">立即掃描</button>
       <ul id="dedupList" class="dlist"></ul>
     </div>
     <div id="expandBox" class="box nokiosk" hidden>
       <div class="row"><span class="lbl">💡 補寫實際用途</span><span id="expandState" class="hint"></span></div>
-      <p class="hint left">比較早的名詞筆記，有的只有幾行定義，看不出實際用在哪裡。按下去，Agent 會上網查證，在每篇後面補一段「延伸說明」：它是什麼、實際用途（什麼情況會用到、具體例子、跟相近概念怎麼選）、跟你筆記的關係。原本的內容不動，每篇會用一次 Agent。</p>
+      <details class="what"><summary>這是什麼？</summary><p class="hint left">比較早的名詞筆記，有的只有幾行定義，看不出實際用在哪裡。按下去，Agent 會上網查證，在每篇後面補一段「延伸說明」：它是什麼、實際用途（什麼情況會用到、具體例子、跟相近概念怎麼選）、跟你筆記的關係。原本的內容不動，每篇會用一次 Agent。</p></details>
       <button type="button" id="expandGo">補寫</button>
     </div>
     <ul id="noteList" class="list"></ul>
@@ -163,7 +205,7 @@
 
   <!-- 閱讀筆記 -->
   <section id="tab-read" class="tab" hidden>
-    <button class="back" data-back="notes">← 已上傳</button>
+    <button class="back" data-back="notes">← 📒 筆記</button>
     <div id="agentBox" class="box">
       <div class="row"><span class="lbl">🔎 Agent</span><span id="agentState" class="hint"></span></div>
       <button type="button" id="agentBtn">讓 Agent 查資料</button>
@@ -191,6 +233,7 @@
   <!-- 所有筆記的待辦事項 -->
   <section id="tab-tasks" class="tab" hidden>
     <div id="tList"></div>
+    <p id="tHint" class="hint left nokiosk">所有筆記裡還沒做完的事都集中在這裡，打勾會同步到原本的筆記。</p>
     <p id="tEmpty" class="empty" hidden>目前沒有未完成的待辦 🎉</p>
     <details id="tDone" class="tdone" hidden><summary></summary><div id="tDoneList"></div></details>
   </section>
@@ -199,8 +242,12 @@
   <section id="tab-learn" class="tab" hidden>
     <!-- 主題清單 -->
     <div id="lnList" class="lview">
+      <button type="button" id="enEntry" class="box enentry nokiosk"><span class="lbl">📖 每日英文閱讀</span><small>每天一篇跟你最近研究有關、符合你程度的英文文章</small></button>
       <ul id="lnTopics" class="list"></ul>
-      <p id="lnEmpty" class="empty" hidden>還沒有學習主題</p>
+      <div id="lnEmpty" class="empty guide" hidden>
+        <p><b>還沒有學習主題</b></p>
+        <p>建一個主題（例如一門課、一個考試），AI 會排大綱、一章一章上課、出題、批改，錯的題目收進錯題本。</p>
+      </div>
       <details id="lnNewBox" class="box">
         <summary><span class="lbl">＋ 新的學習主題</span></summary>
         <label class="field">主題名稱<input id="lnTitle" type="text" placeholder="例如：資料庫概論、多益、Python"></label>
@@ -279,10 +326,8 @@
           <button type="button" id="llMoreBtn" title="照目前的等級再出一個小問題">🎯 再來一題</button>
         </div>
       </div>
-      <div class="box notesbox">
-        <div class="row"><span class="lbl">✏️ 我的筆記</span><span id="llSaved" class="hint"></span></div>
-        <textarea id="llNotes" rows="6" placeholder="邊學邊記；這一章結束時會連同教學重點整理成筆記，放進 Claude Note"></textarea>
-      </div>
+      <button type="button" class="wide fnopen" data-fnopen>✏️ 打開我的筆記</button>
+      <p class="hint left">筆記是懸浮視窗，邊讀邊記；選取教學內容可以直接「📌 記到筆記」或「🔑 加到線索」。</p>
       <div class="row gap lt-actions">
         <button type="button" id="llQuizBtn">📝 這章小測驗</button>
         <button type="button" id="llRedo">重新準備這章</button>
@@ -321,15 +366,93 @@
       <div id="lqScore" class="box group" hidden></div>
       <form id="lqForm"></form>
       <button type="button" id="lqSubmit" class="primary wide" hidden>交卷</button>
-      <div class="box notesbox" id="lqNotesBox" hidden>
-        <div class="row"><span class="lbl">✏️ 我的筆記</span><span id="lqSaved" class="hint"></span></div>
-        <textarea id="lqNotes" rows="5" placeholder="記下這次搞懂或搞錯的地方"></textarea>
-      </div>
+      <button type="button" class="wide fnopen" id="lqNotesBox" data-fnopen hidden>✏️ 打開我的筆記</button>
       <button type="button" id="lqFinish" class="primary wide" hidden>整理成筆記放進 Claude Note</button>
     </div>
   </section>
 
   <!-- 整個筆記庫（唯讀） -->
+  <!-- 每日英文閱讀 -->
+  <section id="tab-eng" class="tab" hidden>
+    <div id="enHome" class="eview">
+      <button class="back" type="button" data-back="learn">← 🎓 學習</button>
+      <h2>📖 每日英文閱讀</h2>
+      <p id="enInfo" class="hint left"></p>
+      <button type="button" id="enPrepare" class="primary wide">🔍 現在找一篇文章</button>
+      <ul id="enList" class="list"></ul>
+      <p id="enEmpty" class="empty" hidden>還沒有文章。按上面的按鈕找第一篇，之後每天會自動準備一篇並推播。</p>
+      <div id="enRepBox" class="box" hidden>
+        <div class="lbl">📈 每週報告</div>
+        <ul id="enReports" class="list"></ul>
+      </div>
+      <div class="row gap nokiosk">
+        <button type="button" id="enRepNow" class="small">📈 產生這週的報告</button>
+        <button type="button" id="enCpNow" class="small">🎯 現在做一次檢查點</button>
+      </div>
+      <details id="enSetBox" class="box">
+        <summary><span class="lbl">⚙️ 等級與主題</span></summary>
+        <label class="field">英文閱讀等級（CEFR；讀完的表現會自動調整）
+          <select id="enLevelSel"></select></label>
+        <label class="field">釘選的主題（選填，一行一個；會和你最近的筆記輪流當作找文章的主題）
+          <textarea id="enPinned" rows="3" placeholder="例如：&#10;RAG&#10;知識管理"></textarea></label>
+        <div class="row gap">
+          <button type="button" id="enSave" class="primary">儲存</button>
+          <button type="button" id="enRetest">重新做分級測驗</button>
+        </div>
+        <p class="hint left">主題來源：最近 7 天新增或修改的筆記。英文原文只存在這個 App 裡；讀完整理的中文筆記確認後才會進 Obsidian 的「英文閱讀」資料夾。</p>
+      </details>
+    </div>
+
+    <div id="enTest" class="eview" hidden>
+      <button class="back" type="button" id="enTestBack">← 📖 每日英文</button>
+      <h2>分級測驗</h2>
+      <p class="hint left">12 題選擇題，大約 5 分鐘。不確定的題目可以不選（不要猜，猜對會被分到太難的等級）。結果用來決定要找多難的文章，之後會依你讀完的表現自動調整。</p>
+      <div id="enTestQs"></div>
+      <button type="button" id="enTestSubmit" class="primary wide">交卷，看我的等級</button>
+    </div>
+
+    <div id="enRead" class="eview" hidden>
+      <button class="back" type="button" id="enReadBack">← 📖 每日英文</button>
+      <div id="enWait" class="status" hidden></div>
+      <div id="enBody" hidden>
+        <h2 id="enTitle"></h2>
+        <p id="enMeta" class="hint left"></p>
+        <div id="enBanner"></div>
+        <div id="enSeg" class="seg" hidden>
+          <button type="button" data-simp="0" class="active">原文</button>
+          <button type="button" data-simp="1">簡化版</button>
+        </div>
+        <button type="button" id="enHard" class="small">😵 太難了，給我簡化版</button>
+        <p class="hint left">點任何一個英文單字，會顯示它在這句話裡的中文意思。</p>
+        <div id="enText" class="md entext"></div>
+        <div id="enQBox" class="box">
+          <div class="lbl">🤔 讀懂了嗎？</div>
+          <div id="enQs"></div>
+        </div>
+        <div id="enRefBox" class="box">
+          <div class="lbl">💭 你怎麼想？</div>
+          <p id="enRefQ"></p>
+          <textarea id="enThought" rows="4" placeholder="可以回答上面的問題，也可以寫自己的想法；留白也可以。你寫的會放進筆記的「我的想法」。"></textarea>
+        </div>
+        <div id="enSumBox" class="box" hidden>
+          <div class="lbl">✍️ 用英文寫三句摘要</div>
+          <p class="hint left">這篇在講什麼？用英文寫三句就好，不用很完美。AI 之後只會指出最影響理解的一個錯誤，不打分數，也不影響等級。</p>
+          <textarea id="enSummary" rows="5" placeholder="Sentence 1. Sentence 2. Sentence 3." spellcheck="false" autocapitalize="off"></textarea>
+        </div>
+        <button type="button" id="enFinish" class="primary wide">✅ 讀完了，整理成筆記</button>
+        <div id="enDone" class="box" hidden></div>
+        <div id="enCp" class="box" hidden></div>
+        <div id="enSfb" class="box" hidden></div>
+        <div id="enFc" class="box" hidden></div>
+      </div>
+    </div>
+    <div id="enReport" class="eview" hidden>
+      <button class="back" type="button" id="enReportBack">← 📖 每日英文</button>
+      <div id="enRepBody" class="enrepbody"></div>
+    </div>
+    <div id="enGloss" class="engloss" hidden></div>
+  </section>
+
   <section id="tab-vault" class="tab" hidden>
     <form id="vSearchForm" class="vsearch">
       <input id="vSearch" type="search" placeholder="搜尋整個筆記庫…" enterkeyhint="search">
@@ -342,7 +465,7 @@
 
   <!-- 閱讀筆記庫裡的筆記 -->
   <section id="tab-vread" class="tab" hidden>
-    <button class="back" id="vBack" type="button">← 筆記庫</button>
+    <button class="back" id="vBack" type="button">← 🔍 搜尋</button>
     <p id="vPath" class="hint left"></p>
     <article id="vBody" class="md"></article>
   </section>
@@ -357,7 +480,30 @@
     <button type="button" id="chClose" class="primary">知道了</button>
   </div>
 </dialog>
+<!-- 懸浮筆記（上課：康乃爾三欄；測驗：單一欄） -->
+<button type="button" id="fnFab" class="fnfab" aria-label="打開我的筆記" title="我的筆記" hidden>✏️</button>
+<div id="fnSel" class="fnsel" hidden>
+  <button type="button" data-to="notes">📌 記到筆記</button>
+  <button type="button" data-to="cues">🔑 加到線索</button>
+</div>
+<section id="fnPanel" class="fnpanel" data-tab="notes" aria-label="我的筆記" hidden>
+  <div class="fnhead" id="fnHead">
+    <b>✏️ 我的筆記</b><span id="fnSaved" class="hint left"></span>
+    <button type="button" id="fnClose" class="small" aria-label="收起筆記" title="收起">▾ 收起</button>
+  </div>
+  <div class="seg fntabs" id="fnTabs" role="tablist" aria-label="康乃爾筆記的三個部分">
+    <button type="button" data-sec="cues">🔑 線索</button>
+    <button type="button" data-sec="notes" class="active">✏️ 筆記</button>
+    <button type="button" data-sec="sum">📝 總結</button>
+  </div>
+  <div class="fnbody">
+    <label class="fnsec" data-sec="cues"><span>🔑 線索</span><textarea id="fnCues" placeholder="關鍵字，或之後可以拿來考自己的問題（一行一個）"></textarea></label>
+    <label class="fnsec" data-sec="notes"><span>✏️ 筆記</span><textarea id="fnNotes"></textarea></label>
+    <label class="fnsec" data-sec="sum"><span>📝 總結</span><textarea id="fnSum" placeholder="上完之後，用自己的話寫兩三句：這一章在講什麼？"></textarea></label>
+  </div>
+</section>
 <div id="toast" hidden></div>
+<script src="cornell.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

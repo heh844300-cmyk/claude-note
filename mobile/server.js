@@ -25,6 +25,17 @@ const htmltext = require('./lib/htmltext');
 const rules = require('./lib/rules');
 const outline = require('./lib/outline');
 const agentq = require('./lib/agentq');
+const reading = require('./lib/reading');
+const progress = require('./lib/progress');
+const mailLib = require('./lib/mail');
+const webtools = require('./lib/webtools');
+const vocab = require('./lib/vocab');
+const settings = require('./lib/settings');
+const translate = require('./lib/translate');
+const { createConverter } = require('./lib/opencc');
+// Simplified → Traditional tables (OpenCC, Apache-2.0); DeepL only outputs Simplified
+const OPENCC = (() => { const f = (n) => { try { return fs.readFileSync(path.join(__dirname, 'lib', 'opencc', n), 'utf8'); } catch (e) { console.error('OpenCC table missing:', n, e.code); return ''; } };
+  return createConverter({ phrases: f('STPhrases.txt'), chars: f('STCharacters.txt'), twPhrases: f('TWPhrases.txt'), twVariants: f('TWVariants.txt') }); })();
 
 // ---------- config ----------
 const ROOT = __dirname;
@@ -72,6 +83,27 @@ const CFG = {
   fillAfterMs: 60 * 1000,                         // an empty note made by clicking a gray link is filled after 1 min untouched (0 = off)
   updateCheckHours: 6,                            // check GitHub for a newer version this often, push once per new version (0 = off)
   dedupEveryDays: 7,                            // scan for duplicate research notes / gray links this often (0 = only by button)
+  readingReportTime: '20:00',                     // weekly reading report on Sunday at this time (HH:mm; '' = off)
+  readingCheckpoint: true,                        // every readingCheckpointDays the daily article is a checkpoint: no help at all, 5 questions, calibrates the level
+  readingCheckpointDays: 28,                      // days between checkpoints (7–90)
+  readingStances: true,                           // each week's topic is read from three views (for / against / hands-on); the last article asks where you stand
+  readingNewsletters: true,                       // an English newsletter you labelled in Gmail can be the day's article (no web search); false: it is just a mail note
+  readingRelate: true,                            // a prepared article is related to your last 3 reading notes in one sentence (same AI call as the questions)
+  readingFactcheck: false,                        // after a reading note is uploaded an Agent checks the linked research notes against the article (uses Agent quota)
+  readingSummary: true,                           // on readingSummaryDay the thought box becomes 3 English sentences, with feedback on the one mistake that hurts most
+  readingSummaryDay: 6,                           // 0 = Sunday … 6 = Saturday
+  mailEnabled: true,                              // read the Gmail export folders (mailAccounts) and turn labelled mails into drafts; does nothing until an account is configured
+  mailAccounts: [],                               // [{ "name": "個人", "folder": "G:\\我的雲端硬碟\\ClaudeNote-Inbox", "email": "me@gmail.com" }]: one per Gmail account (config.json only, not on the settings page)
+  mailEveryMinutes: 10,                           // how often the folders are checked (5–120)
+  mailMaxPerRun: 5,                               // at most this many mails become drafts per check (1–20; each one is an AI call)
+  mailAutoUpload: false,                          // true: a mail goes straight into 信件/ once organized (no draft to confirm); false: it waits as a draft
+  mailNotify: true,                               // one push per check that found new mail (no subject or sender in it)
+  translatorProvider: 'deepl',                    // 'deepl' (DeepL API; outputs Simplified, converted to Traditional here) or 'microsoft' (Azure Translator)
+  translatorKey: '',                              // Microsoft Translator (Azure) key; empty = online translation off (keep it in config.json, never in the settings page)
+  translatorRegion: '',                           // the Azure resource's region, e.g. eastasia; sent as a header when set
+  translateWords: true,                           // tapping a word looks it up online (needs translatorKey); otherwise the small model explains it
+  translatePara: true,                            // a 🌐 button under each paragraph of an article shows its Chinese (needs translatorKey)
+  readingTime: '07:30',                           // daily English article: prepared and pushed at this time (HH:mm; '' = only by button)
   termSplit: true,                                // after upload, move substantive term explanations into 研究/ notes
   maxTopics: 6,                                   // one input with unrelated topics -> at most this many notes (2–20); extra topics go into the last one
   maxTerms: 5,                                    // term explanations moved into 研究/ per note (1–20)
@@ -86,6 +118,12 @@ catch (e) { if (fs.existsSync(CONFIG_FILE)) { console.error('config.json 格式�
 CFG.maxTopics = split.clampMax(CFG.maxTopics, split.MAX_TOPICS, 2, 20);
 CFG.maxTerms = split.clampMax(CFG.maxTerms, split.MAX_TERMS, 1, 20);
 CFG.agentParallel = split.clampMax(CFG.agentParallel, 3, 1, 6);
+CFG.readingTime = reading.normTime(CFG.readingTime);
+CFG.mailEveryMinutes = split.clampMax(CFG.mailEveryMinutes, 10, 5, 120);
+CFG.mailMaxPerRun = split.clampMax(CFG.mailMaxPerRun, 5, 1, 20);
+CFG.readingReportTime = reading.normTime(CFG.readingReportTime);
+CFG.readingCheckpointDays = split.clampMax(CFG.readingCheckpointDays, 28, 7, 90);
+CFG.readingSummaryDay = split.clampMax(CFG.readingSummaryDay, 6, 0, 6);
 if (process.env.CN_DUMP_CFG) { console.log(JSON.stringify(CFG, null, 1)); process.exit(0); }
 if (!CFG.vault || !fs.existsSync(CFG.vault)) {
   console.error('沒有設定 Obsidian 筆記庫（config.json 的 "vault"），或資料夾不存在：' + (CFG.vault || '(空白)') + '\n請先執行安裝精靈 setup.cmd。');
@@ -118,6 +156,7 @@ if (process.env.CN_SELFTEST) { // used by the setup wizard: check the AI connect
   return;
 }
 
+let configWrite = Promise.resolve();   // one writer at a time for config.json (the settings page)
 // ---------- small json store ----------
 function renameRetrySync(from, to) {
   for (let i = 0; ; i++) {
@@ -274,7 +313,7 @@ function parseNote(result) {
 }
 
 function timeContext(d) {
-  const c = new Date(d.createdAt);
+  const c = new Date((d.mail && d.mail.date) || d.createdAt);
   const off = -c.getTimezoneOffset(), hh = Math.floor(Math.abs(off) / 60), mm = Math.abs(off) % 60;
   return `${localISO(c).replace('T', ' ')}（星期${WEEK[c.getDay()]}），時區 UTC${off >= 0 ? '+' : '-'}${hh}${mm ? ':' + String(mm).padStart(2, '0') : ''}（這台電腦的時區）`;
 }
@@ -329,7 +368,9 @@ const pickModel = (d) => (d.images.length || (d.audioNames || []).length || (d.t
 
 // src = the draft that owns the photos (a topic's photos live in its overview draft)
 async function askAI(d, payload, src = d) {
-  const out = await ai.organize({ prompt: payload, images: src.images.map((f) => path.join(draftDir(src.id), f)), model: d.model,
+  // a mail is external content: organize gives Claude the Read tool, so a mail (and a revision of it) goes through the call with no tool at all
+  const out = d.mail ? await ai.plain({ prompt: payload, model: d.model, timeoutMs: CFG.claudeTimeoutMs })
+    : await ai.organize({ prompt: payload, images: src.images.map((f) => path.join(draftDir(src.id), f)), model: d.model,
     cwd: draftDir(src.id), timeoutMs: CFG.claudeTimeoutMs });
   if (!out.trim()) throw new Error('AI 沒有回應');
   return out;
@@ -382,6 +423,17 @@ async function doOrganize(d) {
   d.stage = `${AI_NAME[CFG.provider] || 'AI'}（${modelLabel(d.model)}）整理中…`; await saveDraft(d);
   const instructions = await rules.load(CFG.promptFile, CFG.localPromptFile);
   const ctx = relatedContext((d.text || '') + '\n' + (d.transcript || ''));
+  if (d.reading) {                                 // note of a daily English article: one note, no expiry / reminders / Agent
+    applyClaude(d, await askClaude(d, instructions + HEADER_RULES(d) + reading.READ_RULES(d.reading) + (ctx ? RELATED_RULES + ctx : '') + material(d)), false);
+    Object.assign(d, { expires: null, reminders: [], agent: false, series: null });
+    return;
+  }
+  if (d.mail && d.mail.kind === 'receipt') return doReceipt(d);
+  if (d.mail) {                                    // a mail: one note; no series, no split, no Agent; the AI's output is limited again by applyMail
+    applyClaude(d, await askClaude(d, instructions + HEADER_RULES(d) + mailLib.MAIL_RULES(timeContext({ createdAt: new Date().toISOString() })) + (ctx ? RELATED_RULES + ctx : '') + material(d)), false);
+    applyMail(d);
+    return;
+  }
   if (d.learn) {                                   // notes from a lesson / quiz: one note, into the topic folder
     const t = { title: d.learn.topicTitle };
     const ch = d.learn.chapter ? { n: d.learn.chapter, title: d.learn.chapterTitle } : null;
@@ -425,7 +477,7 @@ async function doRevise(d, instruction) {
   let src = d;
   if (d.group && d.group.role === 'topic') src = await loadDraft(d.group.overviewId).catch(() => d);
   const topicNote = src !== d ? `\n（原始素材包含好幾個主題；這篇草稿只處理其中「${d.title}」這個主題，其他主題的內容不要放進來。只輸出一篇。）\n` : '';
-  const payload = instructions + HEADER_RULES(d) +
+  const payload = instructions + HEADER_RULES(d) + (d.mail ? mailLib.MAIL_RULES(timeContext({ createdAt: new Date().toISOString() })) : '') +
     '\n\n===== 修改模式 =====\n下面附上原始素材與「目前的草稿」（使用者可能已經手動修改過，包括到期與提醒）。請以目前草稿為基礎，依照「使用者的修改要求」調整，' +
     '保留使用者手動修改過的內容。到期、提醒、AGENT 若要求中沒有提到，就照抄目前的值。輸出格式完全同上。\n' + topicNote +
     (() => { const ctx = relatedContext((src.text || '') + '\n' + (src.transcript || '') + '\n' + d.title + '\n' + d.body); return ctx ? RELATED_RULES + ctx : ''; })() +
@@ -434,6 +486,8 @@ async function doRevise(d, instruction) {
   applyClaude(d, await askClaude(d, payload, src), true);
   if (d.series) applySeries(d, d.series);
   if (d.learn) Object.assign(d, { title: d.learn.title, expires: null, reminders: [] });
+  if (d.mail) applyMail(d);
+  if (d.reading) Object.assign(d, { expires: null, reminders: [], agent: false });
   d.revisions = (d.revisions || []).concat([{ instruction, at: new Date().toISOString() }]);
 }
 
@@ -540,6 +594,10 @@ function enqueue(id, kind, arg) {
       d.status = 'ready'; d.stage = ''; d.error = ''; d.pending = null;
       await saveDraft(d);
       log('job done', kind, id, d.model);
+      if (d.mail && kind === 'organize' && CFG.mailAutoUpload && d.body.trim()) {
+        // a failure here leaves the finished draft in place to confirm by hand
+        try { await uploadDraft(d); } catch (e) { log('mail auto upload failed', id, e.message); }
+      }
       if (d.learn && (kind === 'organize' || kind === 'revise') && d.body) startReview(id).catch((e) => log('review start failed', e.message));
     } catch (e) {
       log('job error', kind, id, e.message);
@@ -1264,6 +1322,685 @@ function learnTick() {
   }).catch((e) => log('learn tick error', e.message));
 }
 
+// ---------- daily English reading (英文閱讀): a real article about what the user is researching, at their CEFR level ----------
+// articles (text, simplified version, answers) stay in the data folder; only the confirmed Chinese note goes into the vault
+const READ_DIR = path.join(CFG.dataRoot, 'reading');
+fs.mkdirSync(READ_DIR, { recursive: true });
+const READ_STATE = path.join(READ_DIR, 'state.json');
+// word lists shipped with the program (NGSL 1.2 + NAWL 1.2, CC BY-SA 4.0: see lib/wordlists/README.md)
+const LEXICON = (() => { const f = (n) => { try { return fs.readFileSync(path.join(ROOT, 'lib', 'wordlists', n), 'utf8'); } catch { return ''; } };
+  return vocab.createLexicon({ ngsl: f('ngsl-1.2.txt'), sup: f('ngsl-supplemental.txt'), nawl: f('nawl-1.2.txt') }); })();
+// the reader's word record: which words were tapped (still learning) and which came back without a tap (known)
+const VOCAB_FILE = path.join(READ_DIR, 'vocab.json');
+const loadVocab = () => { try { return JSON.parse(fs.readFileSync(VOCAB_FILE, 'utf8')); } catch { return {}; } };
+const articleFile = (id) => { if (!reading.ID_RE.test(String(id))) throw httpErr(400, 'bad id'); return path.join(READ_DIR, id + '.json'); };
+const loadReadState = () => { try { return JSON.parse(fs.readFileSync(READ_STATE, 'utf8')); } catch { return { level: null, up: 0, down: 0, pinned: [] }; } };
+async function loadArticle(id) {
+  try { return await readJsonFile(articleFile(id)); } catch (e) { if (e.status) throw e; throw httpErr(404, '找不到這篇文章'); }
+}
+async function listArticles() {
+  const out = [];
+  for (const f of (await fsp.readdir(READ_DIR).catch(() => [])).filter((x) => reading.ID_RE.test(x.replace(/\.json$/, '')) && x.endsWith('.json')).sort().reverse()) {
+    try { out.push(await readJsonFile(path.join(READ_DIR, f))); } catch {}
+  }
+  return out.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+// every change to an article or to the level: read the latest, apply fn, save — under one lock. fn must not take the lock again.
+let readLock = Promise.resolve();
+const withReadLock = (fn) => { const job = readLock.then(fn); readLock = job.catch(() => {}); return job; };
+const updateArticle = (id, fn) => withReadLock(async () => { const a = await loadArticle(id); const r = await fn(a); await writeJson(articleFile(id), a); return r === undefined ? a : r; });
+const updateVocab = (fn) => withReadLock(async () => { const r = fn(loadVocab()); await writeJson(VOCAB_FILE, r.rec); return r; });
+const updateReadState = (fn) => withReadLock(async () => { const s = loadReadState(); const r = fn(s); await writeJson(READ_STATE, s); return r === undefined ? s : r; });
+// finding and preparing an article takes minutes (web search): its own queue, so lessons, drafts and the Agent never wait for it
+let readChain = Promise.resolve();
+
+// what the user has been working on: notes changed in the last 7 days (newest first); none -> the newest few
+function recentNoteNames() {
+  const skip = [`${CFG.folder}/${LEARN_FOLDER}/`, `${CFG.folder}/${reading.FOLDER}/`, `${CFG.folder}/${MAIL_FOLDER}/`];   // mail titles are not reading topics (the finder has web tools)
+  const all = [];
+  for (const rel of vault.notes()) {
+    if (!rel.startsWith(CFG.folder + '/') || skip.some((s) => rel.startsWith(s))) continue;
+    try { all.push({ name: path.posix.basename(rel, '.md'), m: fs.statSync(path.join(CFG.vault, ...rel.split('/'))).mtimeMs }); } catch {}
+  }
+  all.sort((a, b) => b.m - a.m);
+  const week = all.filter((x) => Date.now() - x.m < 7 * 86400000);
+  return (week.length ? week : all.slice(0, 5)).slice(0, 30).map((x) => x.name);
+}
+// one line about what a topic's note says, so the finder does not go by the name alone (pinned topics have no note: no hint)
+function topicHints(topics) {
+  const out = {};
+  for (const rel of vault.notes()) {
+    const t = topics.find((x) => x === reading.stripDate(path.posix.basename(rel, '.md')));
+    if (!t || out[t] || !rel.startsWith(CFG.folder + '/') || rel.startsWith(`${CFG.folder}/${MAIL_FOLDER}/`)) continue;
+    try { out[t] = split.summaryOf(vault.readNote(rel).replace(/^\uFEFF/, '').replace(/^---\n[\s\S]*?\n---\n/, '').replace(/^\s*#\s.*$/m, '')); } catch {}
+  }
+  return out;
+}
+// What the article being started is. Precedence when several apply: checkpoint > last article of the weekly topic > English-summary day.
+// A checkpoint comes from the schedule (the daily push only, every readingCheckpointDays days), from an accepted report proposal, or from the button.
+function planArticle(st, before, why, opts) {
+  const d = today(), week = progress.weekStart(d);
+  const due = progress.checkpointDue({ ...st, forceCheckpoint: false }, d, { enabled: CFG.readingCheckpoint, days: CFG.readingCheckpointDays });
+  const checkpoint = !!opts.checkpoint || (!!CFG.readingCheckpoint && (!!st.forceCheckpoint || (why === 'daily' && due)));
+  const stance = !checkpoint && CFG.readingStances ? progress.nextStance(before, week) : null;
+  const summaryDay = !!CFG.readingSummary && progress.weekday(d) === CFG.readingSummaryDay;
+  const kind = progress.dayKind({ checkpoint, finalStance: !!(stance && stance.final), summaryDay });
+  return { week, checkpoint, stance, kind, summaryTask: kind === 'summary' };
+}
+// the last few reading notes (newest first) with one line each, so the new article can be related to them
+function relatedReads(before, max = 3) {
+  const out = [];
+  for (const x of before) {
+    if (out.length >= max) break;
+    if (x.status === 'error' || !x.note || !x.finishedAt) continue;
+    let summary = '';
+    try { summary = split.summaryOf(vault.readNote(`${CFG.folder}/${x.note}`).replace(/^﻿/, '').replace(/^---\n[\s\S]*?\n---\n/, '').replace(/^\s*#\s.*$/m, '')); } catch {}
+    out.push({ title: x.noteTitle || x.title, summary: summary || x.title });
+  }
+  return out;
+}
+// ---------- newsletters as reading: mailScan fills the pool, startArticle takes the oldest unused one from the last 14 days ----------
+const newsStore = store('newsletters.json', { items: [] });
+{ const s = newsStore.get(); s.items = Array.isArray(s.items) ? s.items : []; }
+function newsAdd(m, acc, art) {
+  const s = newsStore.get();
+  s.items.push({ id: crypto.createHash('sha1').update(m.key).digest('hex').slice(0, 12), key: m.key, title: art.title, site: mailLib.oneLine(m.from.name || m.from.address, 60), account: acc.name,
+    url: gmailLink({ messageId: m.messageId, email: acc.email }), date: m.date, paras: art.paras, addedAt: new Date().toISOString(), used: '' });
+  if (s.items.length > 40) s.items = [...s.items.filter((x) => !x.used), ...s.items.filter((x) => x.used)].sort((a, b) => String(a.addedAt).localeCompare(String(b.addedAt))).slice(-40);
+  newsStore.save();
+}
+const newsUnused = () => newsStore.get().items.filter((x) => !x.used && Date.now() - Date.parse(x.addedAt) < 14 * 86400000).sort((a, b) => String(a.addedAt).localeCompare(String(b.addedAt)));
+// a checkpoint needs a calibrated passage and a stance week needs the week's topic: neither uses a newsletter
+function newsPick(plan) {
+  if (!CFG.readingNewsletters || plan.checkpoint || plan.stance) return null;
+  const item = newsUnused()[0];
+  if (!item) return null;
+  const t = reading.trimArticle(item.paras);
+  return { item, cand: { url: item.url, title: item.title, site: item.site, why: '來自你訂閱的電子報', ...t, lex: vocab.difficulty(t.paras, LEXICON) } };
+}
+async function startArticle(why, opts = {}) {
+  const st = loadReadState();
+  if (!st.level) throw httpErr(409, '先做分級測驗，才知道要找多難的文章');
+  const before = await listArticles();
+  if (before.some((a) => a.status === 'processing')) throw httpErr(409, '文章正在準備中');
+  const plan = planArticle(st, before, why, opts);
+  const pooled = newsPick(plan);
+  if (!pooled && !agentAvailable()) throw httpErr(409, '找文章需要 Agent 的網路搜尋（OpenAI 相容 API 要先設定搜尋服務）');
+  const id = today().replace(/-/g, '') + '-' + crypto.randomBytes(5).toString('hex');
+  const a = { id, date: today(), createdAt: new Date().toISOString(), status: 'processing', stage: plan.checkpoint ? '準備檢查點文章中…' : '依你最近的筆記找文章中…', error: '', trigger: why, userLevel: st.level,
+    checkpoint: plan.checkpoint, summaryTask: plan.summaryTask,
+    ...(plan.stance ? { focusWeek: plan.week, stance: plan.stance.id, stanceName: plan.stance.name, stanceIndex: plan.stance.index, finalStance: plan.stance.final } : {}) };
+  await writeJson(articleFile(id), a);
+  const fail = async (msg) => {
+    await updateArticle(id, (x) => { Object.assign(x, { status: 'error', stage: '', error: msg }); }).catch(() => {});
+    if (why === 'daily') await notify('⚠️ 今天的英文文章沒有準備成功', '打開 App 的「🎓 學習 → 📖 每日英文」再試一次', '/?read=list');
+  };
+  readChain = readChain.then(async () => {
+    log('reading start', id, why, plan.kind);
+    try {
+      let topics = pooled ? [] : reading.pickTopics({ recent: recentNoteNames(), pinned: st.pinned, used: before.map((x) => x.topic).filter(Boolean) });
+      if (!topics.length && !pooled) throw new Error('筆記庫裡還沒有筆記，也沒有釘選的主題；先釘選一個想讀的主題');
+      // the weekly topic keeps first place all week (pickTopics would skip it as "used lately")
+      if (plan.stance) {
+        let focus = loadReadState().focus;
+        if (!focus || focus.week !== plan.week) { focus = { week: plan.week, topic: topics[0] }; await updateReadState((s) => { s.focus = focus; }); }
+        topics = [focus.topic, ...topics.filter((t) => t !== focus.topic)];
+      }
+      const avoid = before.map((x) => x.url).filter(Boolean);
+      const found = pooled ? { list: [], topic: '' } : reading.parseCandidates(await ai.research({ prompt: reading.findPrompt({ topics, level: st.level, avoid, hints: topicHints(topics), stance: plan.stance }), model: CFG.agentModel, cwd: AGENT_CWD, timeoutMs: CFG.agentTimeoutMs }), avoid);
+      // the page is read here, not by the AI: the article must be the page's own words
+      // every candidate that can be read is measured; the one closest to the reader's level is used
+      const cands = [];
+      for (const c of found.list) {
+        try {
+          const r = await webtools.fetchUrl(c.url, { keepHtml: true, timeoutMs: 20000, maxBytes: 3 * 1024 * 1024 });
+          const ex = reading.extractArticle(r.html || '');
+          if (reading.wordCount(ex.paras) < 250) { log('reading: no article text at', c.url); continue; }
+          const t = reading.trimArticle(ex.paras);
+          cands.push({ ...c, url: r.url, title: c.title || ex.title, ...t, lex: vocab.difficulty(t.paras, LEXICON) });
+        } catch (e) { log('reading: fetch failed', c.url, e.message); }
+      }
+      const got = pooled ? pooled.cand : cands[vocab.pickByLevel(cands.map((x) => x.lex.level), st.level)];
+      if (cands.length > 1) log('reading: candidates', cands.map((x) => `${x.lex.level} ${x.lex.score} ${x.url}`).join(' | '));
+      if (!got) throw new Error(found.list.length ? '找到的文章都讀不到正文（可能有付費牆或擋機器人），請再試一次' : 'AI 沒有找到合適的文章，請再試一次');
+      const topic = pooled ? '電子報' : plan.stance ? topics[0] : (topics.find((t) => t === found.topic) || topics[0]);
+      // words outside this reader's vocabulary (frequency lists + their own record), and words they looked up before that come back here
+      const prof = vocab.profile(got.paras, LEXICON, { level: st.level, rec: loadVocab() });
+      await updateArticle(id, (x) => { Object.assign(x, { ...(pooled ? { source: 'newsletter' } : {}), topic, url: got.url, title: got.title, site: got.site, why: got.why, paras: got.paras, truncated: got.truncated, lex: { ...got.lex, unknown: prof.unknown.length }, review: prof.review, stage: '準備單字、題目和簡化版中…' }); });
+      // the reader's own notes the article can be compared with (never earlier reading notes)
+      let hits = [];
+      try { hits = related.find(topic + '\n' + got.title + '\n' + reading.plainText(got.paras), { max: 6, chars: 700 }).filter((h) => !h.rel.startsWith(`${CFG.folder}/${reading.FOLDER}/`)).slice(0, 4); } catch (e) { log('reading related:', e.message); }
+      // the last reading notes, for one sentence on how this article agrees or disagrees with them (not on a checkpoint: that would be a hint)
+      const reads = CFG.readingRelate && !plan.checkpoint ? relatedReads(before) : [];
+      const nQ = plan.checkpoint ? 5 : 3;
+      const promptOf = () => reading.prepPrompt({ title: got.title, paras: got.paras, level: st.level, notes: hits, mustGloss: plan.checkpoint ? [] : prof.unknown.map((u) => u.word),
+        types: vocab.pickTypes(loadReadState().qtypes, nQ).map((k) => [k, vocab.QTYPES[k]]), nQuestions: nQ, relatedReads: reads, checkpoint: plan.checkpoint });
+      const parse = (o) => reading.parsePrep(o, { paras: got.paras, noteNames: hits.map((h) => h.name), relatedTitles: reads.map((r) => r.title) });
+      let prep = parse(await ai.plain({ prompt: promptOf(), model: CFG.bigModel, timeoutMs: CFG.claudeTimeoutMs }));
+      // a checkpoint calibrates the level on its questions: ask once more when fewer than five came back valid, and give up below four
+      if (plan.checkpoint && prep.questions.length < nQ) {
+        const again = parse(await ai.plain({ prompt: promptOf(), model: CFG.bigModel, timeoutMs: CFG.claudeTimeoutMs }));
+        if (again.questions.length > prep.questions.length) prep = again;
+        if (prep.questions.length < 4) throw new Error('檢查點文章的題目沒有出夠，請再試一次');
+      }
+      // the program decides whether a simplified version is needed; the AI only wrote one in case. A checkpoint never has one.
+      let simplified = null;
+      if (!plan.checkpoint && (reading.aboveLevel(prep.level, st.level) || reading.aboveLevel(got.lex.level, st.level))) {   // the AI's level or the measured one
+        simplified = prep.simplified || reading.parseParas(await ai.plain({ prompt: reading.simplifyPrompt({ title: got.title, paras: got.paras, level: st.level }), model: CFG.bigModel, timeoutMs: CFG.claudeTimeoutMs }).catch(() => ''));
+      }
+      const hit = prep.reflect && prep.reflect.note && hits.find((h) => h.name === prep.reflect.note);
+      let reflect = prep.reflect ? { ...prep.reflect, rel: hit ? hit.rel : null } : null;
+      if (plan.stance && plan.stance.final) {            // the closing question of the weekly topic is made by the program
+        const prevs = before.filter((x) => x.focusWeek === plan.week && x.stance && x.status !== 'error').sort((p, q) => String(p.createdAt).localeCompare(String(q.createdAt)));
+        reflect = { q: progress.stanceQuestion([...prevs, { title: got.title, stance: plan.stance.id }]), note: null, rel: null, focus: true };
+      }
+      if (plan.summaryTask) reflect = null;               // the "what do you think" box is the English summary today
+      await updateArticle(id, (x) => { Object.assign(x, { status: 'ready', stage: '', level: prep.level, gloss: prep.gloss, questions: prep.questions, reflect, simplified, relate: prep.relate, readyAt: new Date().toISOString() }); });
+      if (pooled) { pooled.item.used = id; newsStore.save(); }
+      log('reading ready', id, got.url, prep.level, simplified ? 'simplified' : '', prep.relate ? 'related' : '');
+      if (why === 'daily') {
+        const head = plan.checkpoint ? '🎯 檢查點文章（不能查字、沒有簡化版）：' : plan.stance && plan.stance.final ? '📖 這個星期的最後一篇：' : '📖 今天的英文文章：';
+        await notify(head + got.title.slice(0, 60), `主題：${topic}｜難度 ${prep.level || '?'}｜約 ${reading.wordCount(got.paras)} 字` + (plan.stance ? `｜觀點：${plan.stance.name}（${plan.stance.index}/3）` : '') +
+          (simplified ? '（附簡化版）' : '') + (plan.summaryTask ? '｜今天用英文寫三句摘要' : ''), '/?read=' + id);
+      }
+    } catch (e) { log('reading error', id, e.message); await fail(e.message.slice(0, 300)); }
+  });
+  return a;
+}
+// called from scan(): once a day after readingTime (later the same day if the PC was off), unless today already has an article;
+// and the weekly report on Sunday evening
+function readingTick() {
+  try { reportTick(); } catch (e) { log('reading report tick error', e.message); }
+  const st0 = loadReadState();
+  if (st0.level && !st0.placedAt) updateReadState((s) => { if (!s.placedAt) s.placedAt = new Date().toISOString(); }).catch(() => {});   // the checkpoint clock starts here for an older state
+  const t = reading.normTime(CFG.readingTime);
+  if (!t || !st0.level || (!agentAvailable() && !(CFG.readingNewsletters && newsUnused().length))) return;
+  const d = today();
+  if (localISO(new Date()).slice(11) < t) return;
+  const sent = sentStore.get(), k = 'reading|' + d;
+  if (sent[k]) return;
+  sent[k] = new Date().toISOString(); sentStore.save();
+  listArticles().then((list) => (list.some((a) => a.date === d) ? null : startArticle('daily'))).catch((e) => log('reading tick error', e.message));
+}
+function reportTick() {
+  if (!loadReadState().level) return;
+  const week = progress.reportDue(localISO(new Date()), CFG.readingReportTime, sentStore.get());
+  if (!week) return;
+  const sent = sentStore.get(); sent['reading-report|' + week] = new Date().toISOString(); sentStore.save();
+  makeReport(week, { push: true, skipEmpty: true }).catch((e) => log('reading report error', e.message));
+}
+// "太難了": a simplified version on request; pressing it also counts when the level is adjusted
+async function simplifyArticle(id) {
+  const run = crypto.randomBytes(4).toString('hex');
+  const a = await updateArticle(id, (x) => {
+    if (x.status !== 'ready') throw httpErr(409, '文章還沒準備好');
+    if (x.checkpoint && !x.finishedAt) throw httpErr(409, '檢查點文章讀完之前不能查字、看簡化版或翻譯');
+    if (!x.finishedAt) x.tooHard = true;
+    if (!x.simplified && !(x.simp && x.simp.status === 'processing')) x.simp = { status: 'processing', id: run };
+  });
+  if (a.simplified || a.simp.id !== run) return a;
+  ai.plain({ prompt: reading.simplifyPrompt({ title: a.title, paras: a.paras, level: a.userLevel || loadReadState().level || 'B1' }), model: CFG.bigModel, timeoutMs: CFG.claudeTimeoutMs })
+    .then((out) => { const p = reading.parseParas(out); if (!p) throw new Error('AI 沒有寫出簡化版'); return p; })
+    .then((p) => updateArticle(id, (x) => { if (x.simp && x.simp.id === run) { x.simplified = p; x.simp = { status: 'ready' }; } }),
+      (e) => updateArticle(id, (x) => { if (x.simp && x.simp.id === run) x.simp = { status: 'error', error: e.message.slice(0, 200) }; }))
+    .catch((e) => log('reading simplify', id, e.message));
+  return a;
+}
+async function glossWord(id, b) {
+  const a = await loadArticle(id), w = reading.cleanWord(b.word), k = w.toLowerCase();
+  if (!w) throw httpErr(400, '沒有選到單字');
+  if (a.checkpoint && !a.finishedAt) throw httpErr(409, '檢查點文章讀完之前不能查字、看簡化版或翻譯');
+  // every tap is kept (also for words already in the glossary): it is the best sign of which words the reader does not know
+  const tap = () => updateArticle(id, (x) => { if (x.finishedAt) return; x.taps = x.taps || []; if (!x.taps.includes(k) && x.taps.length < 500) x.taps.push(k); });
+  if (a.gloss && a.gloss[k]) { await tap(); return { word: w, zh: a.gloss[k], via: 'saved' }; }
+  const para = ((b.simplified && a.simplified) || a.paras || [])[b.para];
+  if (!para || !para.toLowerCase().includes(k)) throw httpErr(400, '文章裡找不到這個字');
+  const save = (zh) => updateArticle(id, (x) => { x.gloss = x.gloss || {}; if (Object.keys(x.gloss).length < 400) x.gloss[k] = zh; });
+  // 1) the online dictionary when configured; 2) any failure or an empty answer goes to the small model, and its answer is saved too
+  const tr = translatorNow();
+  if (CFG.translateWords && tr.ready) {
+    try {
+      const zhD = translate.formatSenses(await tr.lookup(w));
+      if (zhD) { await tap(); await save(zhD); return { word: w, zh: zhD, via: 'online' }; }
+      log('gloss: online dictionary had no entry, using the small model:', w);
+    } catch (e) { log('gloss: online translation failed, using the small model:', w, e.message); }
+  }
+  const zh = reading.parseGloss(await ai.plain({ prompt: reading.glossPrompt(w, reading.sentenceOf(para, w)), model: CFG.smallModel, timeoutMs: 90 * 1000 }));
+  await tap();
+  if (!zh) throw httpErr(502, 'AI 沒有回應，請再點一次');
+  await save(zh);
+  return { word: w, zh, via: 'ai' };
+}
+
+// Traditional Chinese for one paragraph, on demand and cached per article (original and simplified kept apart)
+function translatorNow() { return translate.createTranslator({ provider: CFG.translatorProvider, key: CFG.translatorKey, region: CFG.translatorRegion, toTraditional: OPENCC.ready ? OPENCC.convert : null }); }
+async function translatePara(id, b) {
+  if (!CFG.translatePara) throw httpErr(409, '段落翻譯已關閉（設定頁可以打開）');
+  const tr = translatorNow();
+  if (!tr.ready) throw httpErr(409, '還沒有設定翻譯服務（config.json 的 translatorKey）');
+  const a = await loadArticle(id);
+  if (a.status !== 'ready') throw httpErr(409, '文章還沒準備好');
+  if (a.checkpoint && !a.finishedAt) throw httpErr(409, '檢查點文章讀完之前不能查字、看簡化版或翻譯');
+  const list = b.simplified && a.simplified ? a.simplified : a.paras || [];
+  const i = Number(b.para);
+  if (!Number.isInteger(i) || i < 0 || i >= list.length) throw httpErr(400, '找不到這一段');
+  const which = b.simplified && a.simplified ? 's' : 'o';
+  if (a.zh && a.zh[which] && a.zh[which][i]) return { zh: a.zh[which][i], via: 'saved' };
+  const text = list[i].replace(/^(## |- )/, '');
+  // online first; if it fails or returns nothing, the small model translates the paragraph and that translation is saved
+  let zh = '', via = 'online';
+  try { [zh] = await tr.translate([text]); } catch (e) { log('paragraph: online translation failed, using the small model:', e.message); zh = ''; }
+  if (!zh) {
+    via = 'ai';
+    zh = reading.parseParaZh(await ai.plain({ prompt: reading.paraTranslatePrompt(text), model: CFG.smallModel, timeoutMs: CFG.claudeTimeoutMs }));
+    if (!zh) throw httpErr(502, 'AI 沒有回應，請再按一次 🌐');
+  }
+  await updateArticle(id, (x) => { x.zh = x.zh || { o: {}, s: {} }; x.zh[which][i] = zh; });
+  return { zh, via };
+}
+
+// the Chinese note of an article: an ordinary draft the user confirms before it reaches the vault
+async function readingDraft(a) {
+  const id = new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + crypto.randomBytes(5).toString('hex');
+  await fsp.mkdir(draftDir(id), { recursive: true });
+  const d = { id, createdAt: new Date().toISOString(), status: 'processing', stage: '排隊中…', error: '', text: reading.noteMaterial(a), images: [], audios: [], audioNames: [], transcript: null,
+    title: '', tags: [], body: '', expires: null, reminders: [], agent: false, model: CFG.bigModel, source: 'reading', seriesPick: '-',
+    reading: { id: a.id, title: a.title, url: a.url, site: a.site || '', date: a.date, level: a.level || '', reflectNote: (a.reflect && a.reflect.note) || '' } };
+  await saveDraft(d);
+  enqueue(id, 'organize');
+  await updateArticle(a.id, (x) => { x.draft = id; });
+  return d;
+}
+async function finishArticle(id, b) {
+  const a = await updateArticle(id, (x) => {
+    if (x.status !== 'ready') throw httpErr(409, '文章還沒準備好');
+    if (x.finishedAt) throw httpErr(409, '這篇已經讀完了');
+    x.result = reading.grade(x.questions || [], Array.isArray(b.answers) ? b.answers : []);
+    x.summaryEn = x.summaryTask ? String(b.summaryEn || '').trim().slice(0, 1500) : '';
+    x.thought = x.summaryTask ? '' : String(b.thought || '').trim().slice(0, 3000);
+    x.readSimplified = !x.checkpoint && !!b.simplified && !!x.simplified;
+    x.finishedAt = new Date().toISOString();
+    x.finishedDate = today();
+    x.metrics = progress.articleMetrics(x);       // a snapshot: later changes to the article (e.g. cached Chinese) never move a past week
+  });
+  const st = await updateReadState((s) => {
+    s.qtypes = vocab.scoreTypes(s.qtypes, a.questions || [], a.result.items);
+    if (a.checkpoint) {
+      // a checkpoint calibrates the level on the share answered correctly; the usual up/down streak is not used
+      const from = s.level, c = progress.calibrate(s.level, a.result.correct, a.result.total);
+      Object.assign(s, { level: c.level, up: 0, down: 0 });
+      if (c.judged) {
+        s.lastCheckpoint = today(); s.forceCheckpoint = false;
+        s.checkpoints = (s.checkpoints || []).concat([{ date: today(), correct: a.result.correct, total: a.result.total, from, to: c.level }]).slice(-20);
+      }
+      return { level: c.level, moved: c.moved, from, judged: c.judged };
+    }
+    const n = reading.stepLevel(s, reading.outcomeOf({ correct: a.result.correct, total: a.result.total, tooHard: !!a.tooHard, simplified: a.readSimplified }));
+    Object.assign(s, { level: n.level, up: n.up, down: n.down });
+    return n;
+  });
+  const vr = await updateVocab((rec) => vocab.recordArticle(rec, (a.readSimplified && a.simplified) || a.paras || [], LEXICON, { tapped: a.taps || [], date: a.date }));
+  await updateArticle(id, (x) => { x.moved = st.moved; x.levelAfter = st.level; x.graduated = vr.graduated; if (x.checkpoint) { x.cpFrom = st.from; x.cpTo = st.level; x.cpJudged = !!st.judged; } });
+  if (a.summaryTask && a.summaryEn) await startSummaryFeedback(id);
+  const d = await readingDraft(a);
+  return { ...reading.view(await loadArticle(id)), draft: d.id, draftOpen: true, levelNow: st.level, cp: a.checkpoint ? { from: st.from, to: st.level, moved: st.moved, judged: !!st.judged } : null };
+}
+
+// ---------- English summary (the weekly summary day): feedback on the one mistake that hurts understanding most ----------
+async function startSummaryFeedback(id) {
+  const run = crypto.randomBytes(4).toString('hex');
+  const a = await updateArticle(id, (x) => { x.sfb = { status: 'processing', id: run }; });
+  ai.plain({ prompt: reading.summaryFeedbackPrompt({ title: a.title, paras: a.paras || [], summary: a.summaryEn, level: a.userLevel }), model: CFG.bigModel, timeoutMs: CFG.claudeTimeoutMs })
+    .then((out) => { const r = reading.parseSummaryFeedback(out); if (!r.ok) throw new Error('AI 沒有照格式回答'); return r; })
+    .then((r) => updateArticle(id, (x) => { if (x.sfb && x.sfb.id === run) x.sfb = { status: 'ready', error: r.error, fix: r.fix, praise: r.praise }; }),
+      (e) => updateArticle(id, (x) => { if (x.sfb && x.sfb.id === run) x.sfb = { status: 'error', error: e.message.slice(0, 200) }; }))
+    .catch((e) => log('reading summary feedback', id, e.message));
+  return a;
+}
+async function retrySummaryFeedback(id) {
+  const a = await loadArticle(id);
+  if (!a.finishedAt || !a.summaryTask || !a.summaryEn) throw httpErr(409, '這篇沒有英文摘要可以回饋');
+  if (a.sfb && a.sfb.status === 'processing') return a;
+  return startSummaryFeedback(id);
+}
+
+// ---------- weekly report: numbers by the program, advice by the AI, a proposal the reader accepts or declines ----------
+const REPORT_DIR = path.join(READ_DIR, 'reports');
+const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
+const reportFile = (week) => { if (!WEEK_RE.test(String(week))) throw httpErr(400, 'bad week'); return path.join(REPORT_DIR, week + '.json'); };
+const loadReport = async (week) => { try { return await readJsonFile(reportFile(week)); } catch { return null; } };
+const listReportWeeks = async () => (await fsp.readdir(REPORT_DIR).catch(() => [])).filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f)).map((f) => f.slice(0, 10)).sort().reverse();
+async function listReports(max = 12) {
+  const out = [];
+  for (const w of (await listReportWeeks()).slice(0, max)) { const r = await loadReport(w); if (r) out.push(progress.reportSummary(r)); }
+  return out;
+}
+const updateReport = (week, fn) => withReadLock(async () => { const r = await loadReport(week); if (!r) throw httpErr(404, '沒有這一週的週報'); const v = await fn(r); await writeJson(reportFile(week), r); return v === undefined ? r : v; });
+async function makeReport(week, { push = false, skipEmpty = false } = {}) {
+  const run = crypto.randomBytes(4).toString('hex');
+  await fsp.mkdir(REPORT_DIR, { recursive: true });
+  const articles = await listArticles();
+  const cur = progress.weeklyMetrics(articles, week), prev = progress.weeklyMetrics(articles, progress.addDays(week, -7)), prev2 = progress.weeklyMetrics(articles, progress.addDays(week, -14));
+  if (skipEmpty && cur.n === 0 && !cur.checkpoints.length) return null;      // a week with nothing read gets no scheduled report
+  const cmp = progress.compare(cur, prev), stag = progress.stagnant([cur, prev, prev2]);
+  const st = loadReadState();
+  const base = { week, end: cur.end, createdAt: new Date().toISOString(), status: 'processing', run, level: st.level, metrics: cur, prev, compare: cmp, stagnant: stag,
+    weakest: vocab.weakestType(st.qtypes), learning: vocab.stats(loadVocab()).learning, advice: '', proposal: null, error: '' };
+  await withReadLock(() => writeJson(reportFile(week), base));
+  let advice = '', proposal = null, error = '';
+  if (cur.n >= 2) {
+    try {
+      const out = await ai.plain({ prompt: progress.reportPrompt({ level: st.level, cur, prev: prev.n ? prev : null, cmp, stagnantNow: stag, weakest: base.weakest, learningCount: base.learning, checkpoint: cur.checkpoints[0] || null }),
+        model: CFG.bigModel, timeoutMs: CFG.claudeTimeoutMs });
+      ({ advice, proposal } = progress.parseReport(out, stag));
+      if (!advice) error = 'AI 沒有寫出建議';
+    } catch (e) { error = 'AI 沒有回應：' + e.message.slice(0, 120); if (stag) proposal = { ...progress.STAGNANT_DEFAULT }; }
+  }
+  // re-read before writing: a newer run (or a deleted file) means this result is dropped
+  const done = await withReadLock(async () => {
+    const now = await loadReport(week);
+    if (!now || now.run !== run) return null;
+    Object.assign(now, { status: 'ready', advice, proposal, error });
+    await writeJson(reportFile(week), now);
+    return now;
+  });
+  if (done && push) await notify('📈 這個星期的英文閱讀週報', `讀了 ${cur.n} 篇，${cmp.improved} 項指標進步` + (stag ? '，連續兩週沒有進步，有一個建議等你決定' : ''), '/?read=week-' + week);
+  return done;
+}
+async function decideProposal(week, accept) {
+  const r = await updateReport(week, (x) => {
+    if (!x.proposal) throw httpErr(409, '這份週報沒有建議');
+    if (x.proposal.decision) throw httpErr(409, '這個建議已經處理過了');
+    x.proposal.decision = accept ? 'accepted' : 'declined'; x.proposal.decidedAt = new Date().toISOString();
+  });
+  if (accept) await updateReadState((s) => {
+    const c = r.proposal.choice;
+    if (c === 'checkpoint') s.forceCheckpoint = true;
+    else { const l = progress.applyProposal(s.level, c); if (l !== s.level) Object.assign(s, { level: l, up: 0, down: 0 }); }
+  });
+  return r;
+}
+
+// ---------- fact check of the research notes a reading note links to (an Agent job; a report the reader applies or ignores) ----------
+const FC_DIR = path.join(READ_DIR, 'factcheck');
+const fcFile = (id) => { if (!reading.ID_RE.test(String(id))) throw httpErr(400, 'bad id'); return path.join(FC_DIR, id + '.json'); };
+const loadFc = async (id) => { try { return await readJsonFile(fcFile(id)); } catch { return null; } };
+const writeFc = (id, v) => withReadLock(async () => { await fsp.mkdir(FC_DIR, { recursive: true }); await writeJson(fcFile(id), v); });
+const updateFc = (id, fn) => withReadLock(async () => { const f = await loadFc(id); if (!f) throw httpErr(404, '還沒有事實查核'); const r = await fn(f); await writeJson(fcFile(id), f); return r === undefined ? f : r; });
+const fcBrief = (f) => (f ? { status: f.status, count: (f.items || []).length, open: (f.items || []).filter((i) => i.state === 'open').length } : null);
+function enqueueFactcheck(articleId, noteRel, names) {
+  const jobs = agentJobs();
+  const job = { id: crypto.randomBytes(5).toString('hex'), kind: 'factcheck', note: noteRel, articleId, names, why: 'auto', status: 'queued', error: '', createdAt: new Date().toISOString() };
+  jobs.push(job);
+  agentq.trimJobs(jobs, 200);
+  agentStore.save();
+  writeFc(articleId, { status: 'queued', job: job.id, items: [], names }).catch(() => {});
+  kickAgent();
+}
+async function runFactcheck(job) {
+  const finish = (result) => { job.status = 'done'; job.result = result; job.finishedAt = new Date().toISOString(); agentStore.save(); };
+  const a = await loadArticle(job.articleId);
+  const notes = [];
+  for (const n of job.names || []) {
+    const f = library.findCaseless(RESEARCH_DIR, n + '.md');
+    if (!f) continue;
+    // the claims are checked against exactly this text (without frontmatter and without the line this feature appended)
+    const text = split.readKeep(f).md.replace(/^---\n[\s\S]*?\n---\n/, '').replace(/\n## 延伸閱讀與我的想法[\s\S]*$/, '').slice(0, 6000);
+    if (text.trim()) notes.push({ name: n, text });
+  }
+  if (!notes.length) { await writeFc(job.articleId, { status: 'ready', job: job.id, items: [], names: [], at: new Date().toISOString() }); return finish('no notes'); }
+  await writeFc(job.articleId, { status: 'running', job: job.id, items: [], names: notes.map((n) => n.name) });
+  try {
+    const out = await ai.research({ prompt: reading.factcheckPrompt({ title: a.title, url: a.url, paras: a.paras || [], notes }), model: CFG.agentModel, cwd: AGENT_CWD, timeoutMs: CFG.agentTimeoutMs });
+    await fsp.writeFile(path.join(AGENT_CWD, job.id + '.md'), utf8NoBom(out)).catch(() => {});
+    const items = reading.parseFactcheck(out, notes);
+    const cur = await loadFc(job.articleId);
+    if (cur && cur.job !== job.id) return finish('superseded');       // a newer run owns the result
+    await writeFc(job.articleId, { status: 'ready', job: job.id, items, names: notes.map((n) => n.name), at: new Date().toISOString() });
+    finish(items.length + ' items');
+    if (items.length) await notify('🔍 事實查核：找到 ' + items.length + ' 項說法衝突', `「${String(a.noteTitle || a.title).slice(0, 40)}」連到的研究筆記有地方和文章不一致`, '/?read=' + job.articleId);
+  } catch (e) {
+    await writeFc(job.articleId, { status: 'error', job: job.id, items: [], error: e.message.slice(0, 300) }).catch(() => {});
+    throw e;       // runAgentJob records it on the job; no push for a failed fact check
+  }
+}
+// "apply" changes the research note: only the quoted claim, only when it is still there word for word, the old version first goes to .trash, BOM/CRLF kept
+async function applyFactcheck(id, ids, action) {
+  const results = [];
+  const fc = await updateFc(id, async (f) => {
+    if (f.status !== 'ready') throw httpErr(409, '事實查核還沒完成');
+    for (const it of f.items) {
+      if (!ids.includes(it.id) || it.state !== 'open') continue;
+      if (action === 'ignore') { it.state = 'ignored'; continue; }
+      const no = (reason) => results.push({ id: it.id, ok: false, reason });
+      if (!it.applicable) { no('這一項沒有可以直接套用的修正'); continue; }
+      const file = library.findCaseless(RESEARCH_DIR, it.note + '.md');
+      if (!file) { no('這篇研究筆記已經不存在'); continue; }
+      const raw = await fsp.readFile(file, 'utf8');
+      const k = split.readKeep(file);
+      const md2 = reading.applyFactFix(k.md, it.claim, it.fix);
+      if (!md2) { no('這篇筆記剛被改過，找不到原句，沒有套用'); continue; }
+      await fsp.mkdir(TRASH_DIR, { recursive: true });
+      await fsp.writeFile(path.join(TRASH_DIR, `${learn.safeName(it.note, 80)} (事實查核前 ${localISO(new Date()).replace('T', ' ').replace(':', '-')}).md`), raw, 'utf8');
+      split.writeKeep(file, md2, k);
+      it.state = 'applied'; results.push({ id: it.id, ok: true });
+    }
+  });
+  return { results, factcheck: fc };
+}
+
+async function uploadReadingNote(d) {
+  const R = d.reading, dir = path.join(NOTES_DIR, reading.FOLDER);
+  await fsp.mkdir(dir, { recursive: true });
+  const stamp = localISO(new Date()), title = d.title || R.title;
+  let base = `${R.date} ${reading.fileTitle(title)}`;
+  for (let n = 2; fs.existsSync(path.join(dir, base + '.md')); n++) base = `${R.date} ${reading.fileTitle(title)} (${n})`;
+  const appUrl = (CFG.publicUrl || `http://127.0.0.1:${CFG.port}`).replace(/\/+$/, '') + '/?read=' + R.id;
+  const tags = ['claude-note', '英文閱讀', ...d.tags.filter((x) => x && !['claude-note', '英文閱讀'].includes(x))];
+  // the English text is not copied into the vault (no "Original notes" footer): the note links to the saved copy in the app and to the site
+  const md = '---\n' + `title: ${yamlStr(title)}\ncreated: ${stamp}\nsource: "reading"\ngenerated_by: claude-note\nmodel: ${modelLabel(d.model)}\nreading_url: ${yamlStr(R.url)}\n` + (R.level ? `reading_level: ${R.level}\n` : '') +
+    'tags:\n' + tags.map((x) => '  - ' + yamlStr(String(x).replace(/"/g, ''))).join('\n') + '\n---\n\n' + `# ${title}\n\n` +
+    `> 📖 英文原文：[${R.title.replace(/[[\]]/g, '')}](${R.url})${R.site ? `（${R.site.replace(/[[\]]/g, '')}）` : ''}｜[在 App 重讀（單字、簡化版、我的作答）](${appUrl})\n\n` + d.body.trim() + '\n';
+  await fsp.writeFile(path.join(dir, base + '.md'), utf8NoBom(md));
+  await fsp.rm(draftDir(d.id), { recursive: true, force: true });
+  const rel = reading.FOLDER + '/' + base + '.md';
+  log('uploaded', d.id, '-> reading', rel);
+  // research notes the confirmed note links to: one line appended under 延伸閱讀與我的想法 (never rewritten); the thought goes to the note the question was about
+  const same = (x, y) => String(x).toLowerCase() === String(y).toLowerCase();
+  const names = reading.linkedNames(d.body);
+  if (R.reflectNote && !names.some((n) => same(n, R.reflectNote))) names.unshift(R.reflectNote);
+  const files = names.map((n) => ({ n, f: library.findCaseless(RESEARCH_DIR, n + '.md') })).filter((x) => x.f).slice(0, 5);
+  const thought = reading.thoughtLine(d.body), holder = thought && (files.find((x) => same(x.n, R.reflectNote)) || files[0]);
+  const added = [];
+  for (const x of files) {
+    try {
+      const k = split.readKeep(x.f);
+      const md2 = reading.appendFurther(k.md, { link: `${CFG.folder}/${reading.FOLDER}/${base}`, title, date: R.date, thought: x === holder ? thought : '' });
+      if (md2 !== k.md) { split.writeKeep(x.f, md2, k); added.push(x.n); }
+    } catch (e) { log('reading: append to', x.n, 'failed', e.message); }
+  }
+  if (added.length) log('reading: linked from', added.join(', '));
+  await updateArticle(R.id, (a) => { a.note = rel; a.noteTitle = title; a.draft = null; a.linked = added; }).catch(() => {});
+  if (CFG.readingFactcheck && agentAvailable() && files.length) enqueueFactcheck(R.id, rel, files.map((x) => x.n));
+  if (CFG.termSplit) enqueueTerms(rel);      // concepts that have no note yet become research notes, like any other note
+  return rel;
+}
+
+// ---------- mail (信箱): the Gmail export folders -> drafts ----------
+// A Google Apps Script in the user's own Gmail account writes the mails labelled 「筆記」 as .eml files into a Drive folder that Drive for desktop
+// syncs to this PC (mail/ClaudeNoteGmail.gs, docs/Gmail連接.md). This server only READS those folders. A mail is EXTERNAL content: anyone can write one.
+// So everything made from a mail stays away from every AI call that has a tool:
+//   - its drafts are organized and revised with ai.plain (askAI), never organize (Claude gets Read there);
+//   - on upload: no Agent, no term split (it queues Agent jobs), links to notes that do not exist become plain text (a gray link starts an Agent job);
+//   - its notes live in their own folder (信件/), left out of vault scans (library.setUntrusted), of the related-notes context, and of the reading topics;
+//   - the "用最新規則更新" / answers / Agent routes cannot reach that folder (safeNote only knows the top folder, 研究/, 學習/ and 英文閱讀/).
+const MAIL_FOLDER = '信件';
+const MAIL_DIR = path.join(NOTES_DIR, MAIL_FOLDER);
+const MAIL_MAX_BYTES = 8 * 1024 * 1024;
+const mailStore = store('mail-state.json', { seen: {}, files: {}, threads: {}, last: null });
+{ const s = mailStore.get(); s.seen = s.seen || {}; s.files = s.files || {}; s.threads = s.threads || {}; }
+// config.json: mailAccounts [{ name, folder, email? }] — folder paths are not on the settings page (a path is not something a browser should set)
+function mailAccounts() {
+  const seen = new Set(), out = [];
+  for (const a of Array.isArray(CFG.mailAccounts) ? CFG.mailAccounts : []) {
+    if (!a || typeof a.name !== 'string' || typeof a.folder !== 'string' || !a.name.trim() || !a.folder.trim()) continue;
+    const name = learn.safeName(a.name, 20);
+    if (!name || seen.has(name)) continue;
+    seen.add(name); out.push({ name, folder: path.resolve(a.folder.trim()), email: String(a.email || '').trim().slice(0, 100) });
+  }
+  return out.slice(0, 5);
+}
+async function mailDraft(m, acc, prev) {
+  const id = new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + crypto.randomBytes(5).toString('hex');
+  await fsp.mkdir(draftDir(id), { recursive: true });
+  const d = { id, createdAt: new Date().toISOString(), status: 'processing', stage: '排隊中…', error: '', text: mailLib.buildMaterial(m, { account: acc.name, prevSubject: prev ? prev.subject : '' }),
+    images: [], audios: [], audioNames: [], transcript: null, title: '', tags: [], body: '', expires: null, reminders: [], agent: false, model: null, source: 'mail', seriesPick: '-',
+    mail: { kind: mailLib.classify(m), account: acc.name, email: acc.email, key: m.key, messageId: m.messageId, threadKey: m.threadKey, subject: m.subject.slice(0, 120), from: m.from.address, date: m.date, events: m.events } };
+  await saveDraft(d);
+  enqueue(id, 'organize');
+  return d;
+}
+// the AI's output is limited too, whatever the mail said (mailLib.limitBody: 12 to-dos, no remote images, no nonsense years); and here: at most 3 reminders of
+// the AI's own, the calendar's reminders made by the program, never an Agent, never an expiry
+const limitMailBody = (body) => mailLib.limitBody(body);
+function applyMail(d) {
+  const now = Date.now();
+  d.agent = false; d.series = null;
+  d.body = limitMailBody(d.body);
+  d.mail.triage = mailLib.triageOf(d.body);       // the secretary's call (reply / just know / ignore); stays a tag and a field, a mail the user labelled is never dropped
+  const ai3 = normReminders(d.reminders).filter((r) => parseLocal(r.at).getTime() > now).slice(0, 3);
+  const prog = normReminders(mailLib.remindersFromEvents((d.mail && d.mail.events) || [], now));
+  const keep = ai3.filter((r) => !prog.some((p) => Math.abs(parseLocal(p.at) - parseLocal(r.at)) < 30 * 60000));    // an AI reminder next to a calendar one is the same thing
+  d.reminders = normReminders([...keep, ...prog]).slice(0, 6);
+  d.expires = null;                          // a mail note never expires by itself: its to-dos and context must not disappear (the AI's expiry is ignored)
+  fixExpiry(d);
+}
+// ---------- receipts: one line per receipt in a single shared note ----------
+const RECEIPT_FILE = path.join(MAIL_DIR, '收據彙整.md');
+let receiptChain = Promise.resolve(), receiptNew = 0, receiptTimer = null;
+// encodeURIComponent leaves ( ) ! ' * ~ alone, and a ) in a Message-ID would end the markdown link early
+const encId = (x) => encodeURIComponent(x).replace(/[!'()*~]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+const gmailLink = (M) => (M.messageId ? 'https://mail.google.com/mail/' + (M.email ? '?authuser=' + encId(M.email) : '') + '#search/rfc822msgid%3A' + encId(M.messageId) : '');
+const mailDate10 = (M) => (M.date ? localISO(new Date(M.date)) : localISO(new Date())).slice(0, 10);
+async function doReceipt(d) {
+  const M = d.mail;
+  const out = await ai.plain({ prompt: mailLib.RECEIPT_PROMPT(d.text), model: d.model, timeoutMs: CFG.claudeTimeoutMs }).catch(() => '');
+  const r = mailLib.parseReceipt(out, { text: d.text, subject: M.subject, from: { name: '', address: M.from } });
+  d.receipt = r;
+  d.title = '收據：' + r.merchant;
+  d.body = mailLib.receiptRow(r, mailDate10(M), gmailLink(M));
+  Object.assign(d, { expires: null, reminders: [], agent: false, series: null, tags: ['收據'] });
+}
+// appends are serialized: the queue and the manual upload route can both reach this
+function appendReceipt(line) {
+  const run = async () => {
+    await fsp.mkdir(MAIL_DIR, { recursive: true });
+    let cur = ''; try { cur = await fsp.readFile(RECEIPT_FILE, 'utf8'); } catch {}
+    if (!cur.trim()) cur = mailLib.RECEIPT_NOTE_HEAD(localISO(new Date()));
+    if (!cur.endsWith('\n')) cur += '\n';
+    await fsp.writeFile(RECEIPT_FILE, utf8NoBom(cur + line + '\n'));
+  };
+  const p = receiptChain.then(run, run);
+  receiptChain = p.catch(() => {});
+  return p;
+}
+async function uploadReceipt(d) {
+  const M = d.mail;
+  await appendReceipt(mailLib.checkRow(d.body, d.receipt || { merchant: '未知', amount: '未確認', purpose: '' }, mailDate10(M), gmailLink(M)));
+  await fsp.rm(draftDir(d.id), { recursive: true, force: true });
+  const rel = MAIL_FOLDER + '/收據彙整.md';
+  const st = mailStore.get();
+  if (st.seen[M.key]) { st.seen[M.key].note = rel; mailStore.save(); }
+  receiptNew++;                                      // one push for a batch of receipts, with a count only
+  clearTimeout(receiptTimer);
+  receiptTimer = setTimeout(() => { const n = receiptNew; receiptNew = 0; if (n && CFG.mailNotify) notify('🧾 收據彙整新增 ' + n + ' 筆', '', '/').catch(() => {}); }, 20000);
+  if (receiptTimer.unref) receiptTimer.unref();
+  log('uploaded', d.id, '-> receipt', rel);
+  return rel;
+}
+async function uploadMailNote(d) {
+  const M = d.mail;
+  if (M.kind === 'receipt') return uploadReceipt(d);
+  await fsp.mkdir(MAIL_DIR, { recursive: true });
+  const stamp = localISO(new Date());
+  const date = (M.date ? localISO(new Date(M.date)) : stamp).slice(0, 10);
+  const title = learn.safeName(d.title || M.subject, 70) || '信件';
+  let base = `${date} ${title}`;
+  for (let n = 2; fs.existsSync(path.join(MAIL_DIR, base + '.md')); n++) base = `${date} ${title} (${n})`;
+  // a mail must not create gray links: they would start Agent jobs (web) with text from the mail
+  const body = library.unlinkUnknown(d.body, library.nameExists(library.noteNameSet(CFG.vault))).text;
+  const tags = ['claude-note', '信件', ...(M.triage ? [M.triage] : []), ...d.tags.filter((x) => x && !['claude-note', '信件', ...mailLib.TRIAGE].includes(x))];
+  const gmail = gmailLink(M);
+  const md = '---\n' + `title: ${yamlStr(d.title || M.subject)}\ncreated: ${stamp}\nsource: "mail"\ngenerated_by: claude-note\nmodel: ${modelLabel(d.model)}\nmail_account: ${yamlStr(M.account)}\n` +
+    (M.date ? `mail_date: ${yamlStr(M.date)}\n` : '') + (M.triage ? `mail_triage: ${yamlStr(M.triage)}\n` : '') + (d.expires ? `expires: ${d.expires}\n` : '') +
+    (d.reminders.length ? 'reminders:\n' + d.reminders.map((r) => '  - ' + yamlStr(`${r.at} | ${r.text}`)).join('\n') + '\n' : '') +
+    'tags:\n' + tags.map((x) => '  - ' + yamlStr(String(x).replace(/"/g, ''))).join('\n') + '\n---\n\n' + `# ${d.title || M.subject}\n\n` +
+    `> ✉️ ${M.account} 信箱｜寄件者 ${mailLib.oneLine(M.from, 80)}｜${date}${gmail ? `｜[在 Gmail 開啟](${gmail})` : ''}\n\n` + body.trim() + '\n';     // the mail itself is not copied into the vault
+  await fsp.writeFile(path.join(MAIL_DIR, base + '.md'), utf8NoBom(md));
+  await fsp.rm(draftDir(d.id), { recursive: true, force: true });
+  const rel = MAIL_FOLDER + '/' + base + '.md';
+  const st = mailStore.get();
+  if (st.seen[M.key]) { st.seen[M.key].note = rel; mailStore.save(); }
+  log('uploaded', d.id, '-> mail', rel);
+  return rel;
+}
+let mailBusy = false, mailLast = 0;
+async function mailScan(why) {
+  if (mailBusy) return { busy: true };
+  mailBusy = true;
+  const out = { at: new Date().toISOString(), why, created: 0, skipped: 0, errors: 0, accounts: {} };
+  try {
+    const st = mailStore.get();
+    for (const acc of mailAccounts()) {
+      const info = out.accounts[acc.name] = { ok: true, found: 0 };
+      let names, root;
+      try { root = await fsp.realpath(acc.folder); names = (await fsp.readdir(root)).filter((n) => /\.eml$/i.test(n)).sort(); } catch { info.ok = false; info.error = '讀不到資料夾'; continue; }
+      const known = (st.files[acc.name] = st.files[acc.name] || {});
+      for (const n of names) {
+        if (out.created >= CFG.mailMaxPerRun) break;
+        const abs = path.join(root, n);
+        let ls; try { ls = await fsp.lstat(abs); } catch { continue; }
+        if (!ls.isFile() || ls.isSymbolicLink()) continue;                         // direct-child regular files only
+        if (known[n] === ls.size) continue;                                        // looked at before, unchanged
+        if (Date.now() - ls.mtimeMs < 30000) continue;                             // Drive may still be writing it
+        if (ls.size > MAIL_MAX_BYTES) { known[n] = ls.size; out.skipped++; continue; }
+        let real; try { real = await fsp.realpath(abs); } catch { continue; }
+        if (path.dirname(real).toLowerCase() !== root.toLowerCase()) { known[n] = ls.size; continue; }
+        info.found++;
+        let m; try { m = mailLib.parseEml(await fsp.readFile(real)); } catch (e) { known[n] = ls.size; out.errors++; log('mail parse failed', acc.name, n, e.message); continue; }
+        if (st.seen[m.key]) { known[n] = ls.size; out.skipped++; continue; }      // the same Message-ID (also across accounts)
+        if (CFG.readingNewsletters && !m.isReply && mailLib.classify(m) === 'newsletter') {   // an English newsletter is a reading article, not a note
+          const art = reading.newsletterArticle(m.text, m.subject);
+          if (art) { newsAdd(m, acc, art); st.seen[m.key] = { at: out.at, account: acc.name, file: n, thread: m.threadKey, newsletter: true }; known[n] = ls.size; out.pooled = (out.pooled || 0) + 1; continue; }
+        }
+        const d = await mailDraft(m, acc, st.threads[m.threadKey]);
+        st.seen[m.key] = { at: out.at, account: acc.name, file: n, thread: m.threadKey, draft: d.id };
+        st.threads[m.threadKey] = { subject: m.subject, at: out.at };
+        known[n] = ls.size; out.created++;
+      }
+    }
+    // keep the state small: the oldest entries go first
+    const cap = (o, max) => { const ks = Object.keys(o); if (ks.length > max) for (const k of ks.slice(0, ks.length - max)) delete o[k]; };
+    cap(st.seen, 5000); cap(st.threads, 2000); for (const k of Object.keys(st.files)) cap(st.files[k], 5000);
+    st.last = out; mailStore.save();
+    if (out.created && CFG.mailNotify) await notify('✉️ 收到 ' + out.created + ' 封要整理的信', CFG.mailAutoUpload ? '整理好會直接放進筆記庫的「信件」資料夾' : '整理好後到「📥 草稿」確認', '/');
+    log('mail scan', why, 'created', out.created, 'skipped', out.skipped, 'errors', out.errors);
+    return out;
+  } finally { mailBusy = false; }
+}
+function mailTick() {
+  if (!CFG.mailEnabled || !mailAccounts().length || Date.now() - mailLast < CFG.mailEveryMinutes * 60000) return;
+  mailLast = Date.now();
+  mailScan('auto').catch((e) => log('mail scan error', e.message));
+}
+// counts and times only: this GET is open to a public computer, so no subject, sender or folder path
+function mailStatus() {
+  const st = mailStore.get(), accs = mailAccounts(), l = st.last;
+  return { enabled: !!CFG.mailEnabled, configured: accs.length > 0, everyMinutes: CFG.mailEveryMinutes, busy: mailBusy,
+    accounts: accs.map((a) => { let files = 0, ok = true; try { files = fs.readdirSync(a.folder).filter((n) => /\.eml$/i.test(n)).length; } catch { ok = false; } return { name: a.name, ok, files, seen: Object.values(st.seen).filter((x) => x.account === a.name).length }; }),
+    last: l ? { at: l.at, created: l.created, pooled: l.pooled || 0, skipped: l.skipped, errors: l.errors } : null };
+}
+
 // ---------- upload to vault ----------
 async function copyImages(d, date) {
   const embeds = [];
@@ -1290,6 +2027,8 @@ async function uploadDraft(d) {
   const safe = (d.title || '').replace(/[\\/:*?"<>|#^[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'note';
   if (d.group && d.group.role === 'overview' && !d.body) throw httpErr(400, '總覽會在這一組的主題都上傳後自動建立');
   if (d.learn) return uploadLearnNote(d);             // notes from a lesson / quiz: into its topic folder
+  if (d.reading) return uploadReadingNote(d);         // note of a daily English article: into 英文閱讀/
+  if (d.mail) return uploadMailNote(d);               // a mail: into 信件/, no Agent, no term split
   if (d.series) {                                     // continues a tracked note: goes into today's day note
     const name = await uploadSeriesEntry(d);
     if (d.group && d.group.role === 'topic') await finalizeGroup(d.group.overviewId, { id: d.id, file: name, title: name.replace(/\.md$/i, ''), summary: split.summaryOf(d.body) });
@@ -1383,10 +2122,11 @@ const version = require('./lib/version').createVersion({ repoDir: path.join(ROOT
 
 // ---------- public-entrance login ----------
 const vault = createVault({ CFG });
-const related = createRelated({ vault });
+library.setUntrusted([`${CFG.folder}/${MAIL_FOLDER}`]);          // no vault scan (gray links, duplicates, link context) looks inside the mail folder
+const related = createRelated({ vault, skip: [`${CFG.folder}/${MAIL_FOLDER}`] });
 const auth = createAuth({ dataRoot: CFG.dataRoot, log,
   onLogin: (s) => notify(s.kiosk ? '🔐 公用電腦已登入（2 小時內有效）' : '🔐 新裝置已登入', `${s.ip}｜${s.ua.slice(0, 80)}
-不是你的話，到「新增」頁的登入裝置清單把它移除`, '/').catch(() => {}) });
+不是你的話，到「⚙️ 設定・通知」的登入裝置清單把它移除`, '/').catch(() => {}) });
 
 // ---------- scheduler: reminders + expiry ----------
 let scanning = false;
@@ -1395,9 +2135,9 @@ async function scan() {
   try {
     const now = Date.now();
     const sent = sentStore.get(); let dirty = false;
-    const names = (await fsp.readdir(NOTES_DIR).catch(() => [])).filter((n) => n.toLowerCase().endsWith('.md'));
-    for (const name of names) {
-      const file = path.join(NOTES_DIR, name);
+    const entries = (await fsp.readdir(NOTES_DIR).catch(() => [])).filter((n) => n.toLowerCase().endsWith('.md')).map((n) => ({ name: n, file: path.join(NOTES_DIR, n), mail: false }));
+    for (const n of (await fsp.readdir(MAIL_DIR).catch(() => [])).filter((x) => x.toLowerCase().endsWith('.md'))) entries.push({ name: MAIL_FOLDER + '/' + n, file: path.join(MAIL_DIR, n), mail: true });
+    for (const { name, file, mail: isMail } of entries) {
       let md; try { md = await fsp.readFile(file, 'utf8'); } catch { continue; }
       const fm = parseFrontmatter(md);
       if (!fm || fm.generated_by !== 'claude-note') continue;
@@ -1410,14 +2150,14 @@ async function scan() {
         if (t > now) { pendingReminder = true; continue; }
         if (now - t <= CFG.lateReminderMs) {
           const late = now - t > 5 * 60 * 1000 ? '（延遲送達）' : '';
-          await notify('⏰ ' + r.text + late, (fm.title || name.replace(/\.md$/, '')) + ' · ' + r.at.slice(11), '/?note=' + encodeURIComponent(name));
+          await notify('⏰ ' + r.text + late, (fm.title || name.replace(/\.md$/, '')) + ' · ' + r.at.slice(11), isMail ? '/' : '/?note=' + encodeURIComponent(name));
           sent[key] = 'sent ' + new Date().toISOString();
         } else sent[key] = 'missed ' + new Date().toISOString();
         dirty = true; log('reminder', sent[key], key);
       }
       const exp = fm.expires ? parseLocal(fm.expires, 23, 59) : null;
       if (exp && exp.getTime() <= now && !pendingReminder) {
-        const dst = await moveSafe(file, TRASH_DIR, name);
+        const dst = await moveSafe(file, TRASH_DIR, path.basename(name));
         for (const m of md.matchAll(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g)) {
           const a = path.join(ATTACH_DIR, m[1]);
           if (path.dirname(path.resolve(a)) === path.resolve(ATTACH_DIR) && fs.existsSync(a)) await moveSafe(a, path.join(TRASH_DIR, 'attachments'), m[1]).catch(() => {});
@@ -1429,6 +2169,8 @@ async function scan() {
     if (CFG.fillAfterMs > 0 && agentAvailable()) scanFill();
     try { seriesTick(); } catch (e) { log('series tick error', e.message); }
     learnTick();
+    try { readingTick(); } catch (e) { log('reading tick error', e.message); }
+    try { mailTick(); } catch (e) { log('mail tick error', e.message); }
   } catch (e) { log('scan error', e.message); }
   finally { scanning = false; }
 }
@@ -1578,6 +2320,7 @@ async function runAgentJob(job) {
     if (job.kind === 'fill') { await runFill(job); return; }
     if (job.kind === 'terms') { await runTerms(job); return; }
     if (job.kind === 'expand') { await runExpand(job); return; }
+    if (job.kind === 'factcheck') { await runFactcheck(job); return; }
     const file = safeNote(job.note);
     const md = await fsp.readFile(file, 'utf8').catch(() => { throw new Error('筆記已不存在（可能已到期或被刪除）'); });
     const prompt = AGENT_PROMPT.replace('{{SANDBOX}}', SANDBOX_ON
@@ -1598,7 +2341,7 @@ async function runAgentJob(job) {
   } catch (e) {
     job.status = 'error'; job.error = e.message.slice(0, 500); job.finishedAt = new Date().toISOString(); agentStore.save();
     log('agent error', job.note, e.message);
-    if (job.kind !== 'terms' && !(job.kind === 'expand' && job.why !== 'manual')) await notify('⚠️ Agent 失敗：' + job.note.replace(/\.md$/, ''), e.message.slice(0, 100), '/?note=' + encodeURIComponent(job.note));
+    if (job.kind !== 'terms' && job.kind !== 'factcheck' && !(job.kind === 'expand' && job.why !== 'manual')) await notify('⚠️ Agent 失敗：' + job.note.replace(/\.md$/, ''), e.message.slice(0, 100), '/?note=' + encodeURIComponent(job.note));
   }
 }
 // ---------- filling gray links: an empty note created by clicking [[name]] gets written by the Agent ----------
@@ -1819,7 +2562,7 @@ async function dedupScan(why) {
     while (st.items.length > 300) st.items.shift();
     dedupStore.save();
     log('dedup scan', why, 'found', fresh.length, 'new');
-    if (why === 'weekly' && fresh.length) await notify('🧹 找到 ' + fresh.length + ' 組重複的名詞筆記', '到「已上傳 → 研究」確認要不要合併', '/');
+    if (why === 'weekly' && fresh.length) await notify('🧹 找到 ' + fresh.length + ' 組重複的名詞筆記', '到「📒 筆記 → 🔎 研究」確認要不要合併', '/');
     return { found: fresh.length };
   } finally { dedupBusy = false; }
 }
@@ -1934,6 +2677,7 @@ function safeNote(name) {
   if (typeof name !== 'string') throw httpErr(400, 'bad name');
   const pre = library.RESEARCH_FOLDER + '/';
   if (name.startsWith(pre)) return safeInside(RESEARCH_DIR, name.slice(pre.length));
+  if (name.startsWith(reading.FOLDER + '/')) return safeInside(path.join(NOTES_DIR, reading.FOLDER), name.slice(reading.FOLDER.length + 1));   // 英文閱讀/<file>.md
   // 學習/<topic>/<file>.md: exactly three parts, each a clean name, resolved inside that topic's folder
   if (name.startsWith(LEARN_FOLDER + '/')) {
     const parts = name.split('/');
@@ -1985,7 +2729,7 @@ function applyEdits(d, b) {
   if (Array.isArray(b.reminders)) d.reminders = normReminders(b.reminders);
   if (typeof b.agent === 'boolean') d.agent = b.agent;
   // "接續到" changed on the draft (not for update drafts): '' / '-' = a normal note
-  if ('series' in b && !d.update && !d.learn && (b.series || null) !== (d.series || null)) {
+  if ('series' in b && !d.update && !d.learn && !d.reading && !d.mail && (b.series || null) !== (d.series || null)) {
     if (!b.series || b.series === '-') d.series = null;
     else { const s = findSeries(b.series); if (!s) throw httpErr(400, '找不到這篇持續追蹤的筆記'); applySeries(d, s.note); }
   }
@@ -2000,7 +2744,7 @@ const summary = (d) => ({ id: d.id, createdAt: d.createdAt, updatedAt: d.updated
   group: d.group ? { role: d.group.role, index: d.group.index || 0, size: d.group.size, overviewId: d.group.overviewId || d.id } : null,
   update: d.update ? { note: d.update.note, warnings: d.update.warnings || [] } : null,
   series: d.series ? (findSeries(d.series) || { name: d.series }).name : null,
-  learn: d.learn ? d.learn.topicTitle : null, review: reviewSummary(d) });
+  learn: d.learn ? d.learn.topicTitle : null, reading: d.reading ? d.reading.title : null, mail: d.mail ? d.mail.account : null, mailTag: d.mail ? (d.mail.kind === 'receipt' ? '🧾 收據' : d.mail.triage || '') : '', review: reviewSummary(d) });
 
 async function route(req, res) {
   const url = new URL(req.url, 'http://local');
@@ -2012,6 +2756,25 @@ async function route(req, res) {
     if (p[2] === 'version' && !p[3] && M === 'GET') return send(res, 200, version.get());
     if (p[2] === 'version' && p[3] === 'check' && M === 'POST') return send(res, 200, await version.check());
     if (p[2] === 'changelog' && !p[3] && M === 'GET') return send(res, 200, version.changelog());
+    // the settings page: a fixed list of adjustable values and switches (lib/settings.js); saved to config.json and applied at once
+    if (p[2] === 'config' && !p[3]) {
+      if (req.publicSession && req.publicSession.kiosk) return send(res, 403, { error: '公用電腦模式不能看或修改設定' });
+      if (M === 'GET') return send(res, 200, { groups: settings.view(CFG), translator: translatorNow().ready });
+      if (M === 'PUT') {
+        let values; try { values = settings.validate(await readJson(req), CFG); } catch (e) { throw httpErr(400, e.message); }
+        if (Object.keys(values).length) {
+          await (configWrite = configWrite.catch(() => {}).then(async () => {
+            const text = await fsp.readFile(CONFIG_FILE, 'utf8').catch((e) => { if (e.code === 'ENOENT') return ''; throw e; });
+            await fsp.writeFile(CONFIG_FILE + '.tmp', settings.mergeIntoFile(text, values), 'utf8');
+            await renameRetry(CONFIG_FILE + '.tmp', CONFIG_FILE);
+          }));
+          Object.assign(CFG, values);                      // every listed setting is read when it is used, so no restart is needed
+          log('settings changed:', Object.keys(values).join(', '));
+          if ('agentParallel' in values) kickAgent();
+        }
+        return send(res, 200, { changed: Object.keys(values), groups: settings.view(CFG) });
+      }
+    }
     if (p[2] === 'features') {
       // connection addresses for the 「連線網址」 box (phone via Tailscale, public computer via Funnel)
       const mobileUrl = CFG.publicUrl || '', publicPcUrl = CFG.publicPort && CFG.funnelUrl ? CFG.funnelUrl : '';
@@ -2069,18 +2832,25 @@ async function route(req, res) {
         return send(res, 202, enqueueAgent(b.note, 'manual'));
       }
     }
+    if (p[2] === 'mail') {
+      if (!p[3] && M === 'GET') return send(res, 200, mailStatus());
+      if (p[3] === 'scan' && M === 'POST') return send(res, 200, await mailScan('manual'));
+    }
+    const kioskNow = !!(req.publicSession && req.publicSession.kiosk);        // a public computer never sees mail drafts (their titles are the mail's content)
     if (p[2] === 'drafts' && !p[3]) {
-      if (M === 'GET') return send(res, 200, (await listDrafts()).map(summary));
+      if (M === 'GET') return send(res, 200, (await listDrafts()).filter((d) => !(kioskNow && d.mail)).map(summary));
       if (M === 'POST') { const d = await createDraft(await readForm(req)); return send(res, 201, { id: d.id }); }
     }
     if (p[2] === 'drafts' && p[3]) {
       const id = p[3];
       if (p[4] === 'file' && M === 'GET') {
         const d = await loadDraft(id);
+        if (d.mail && kioskNow) return send(res, 404, { error: 'not found' });
         if (!d.images.includes(p[5])) return send(res, 404, { error: 'not found' });
         return sendFile(res, path.join(draftDir(id), p[5]));
       }
       const d = await loadDraft(id);
+      if (d.mail && kioskNow) return send(res, 404, { error: '找不到這份草稿' });
       const isOverview = !!(d.group && d.group.role === 'overview' && d.status !== 'processing');
       if (!p[4] && M === 'GET') {
         if (isOverview) { const entries = await groupEntries(d); d.body = split.overviewBody(entries); d.groupEntries = entries; }
@@ -2359,6 +3129,63 @@ async function route(req, res) {
       return send(res, 200, await fsp.readFile(safeNote(p[3]), 'utf8').catch(() => { throw httpErr(404, '找不到筆記（可能已到期移到垃圾桶）'); }), 'text/markdown; charset=utf-8');
     }
     if (p[2] === 'attachments' && p[3] && M === 'GET') return sendFile(res, safeInside(ATTACH_DIR, p[3]));
+    // daily English reading
+    if (p[2] === 'reading') {
+      const rid = p[3];
+      if (!rid && M === 'GET') {
+        const st = loadReadState(), rec = loadVocab();
+        return send(res, 200, { translator: translatorNow().ready, translatePara: !!CFG.translatePara, vocab: vocab.stats(rec), learning: vocab.learningWords(rec, 40), weakest: vocab.weakestType(st.qtypes), level: st.level || null, pinned: st.pinned || [], time: reading.normTime(CFG.readingTime), available: agentAvailable(), levels: reading.LEVELS,
+          placement: reading.placementView(), today: today(), reports: await listReports(),
+          checkpointInfo: { last: st.lastCheckpoint || null, due: progress.checkpointDue(st, today(), { enabled: CFG.readingCheckpoint, days: CFG.readingCheckpointDays }), force: !!st.forceCheckpoint, days: CFG.readingCheckpointDays, history: (st.checkpoints || []).slice(-5) },
+          features: { stances: !!CFG.readingStances, relate: !!CFG.readingRelate, factcheck: !!CFG.readingFactcheck, summary: !!CFG.readingSummary, summaryDay: CFG.readingSummaryDay, checkpoint: !!CFG.readingCheckpoint, reportTime: CFG.readingReportTime },
+          focus: st.focus && st.focus.week === progress.weekStart(today()) ? st.focus.topic : '', articles: (await listArticles()).filter((a) => !(kioskNow && a.source === 'newsletter')).slice(0, 60).map(reading.summary) });
+      }
+      if (rid === 'placement' && M === 'POST') {
+        const g = reading.gradePlacement((await readJson(req)).answers);
+        await updateReadState((s) => { Object.assign(s, { level: g.level, up: 0, down: 0, placedAt: new Date().toISOString() }); });
+        return send(res, 200, g);
+      }
+      if (rid === 'settings' && M === 'PUT') {
+        const b = await readJson(req);
+        const st = await updateReadState((s) => {
+          if ('pinned' in b) s.pinned = reading.normPinned(b.pinned);
+          if ('level' in b) { const l = reading.normLevel(b.level); if (!l) throw httpErr(400, '等級只能是 ' + reading.LEVELS.join('、')); if (l !== s.level) Object.assign(s, { level: l, up: 0, down: 0 }); }
+        });
+        return send(res, 200, { level: st.level, pinned: st.pinned || [] });
+      }
+      if (rid === 'prepare' && M === 'POST') { let b = {}; try { b = await readJson(req); } catch {} return send(res, 202, reading.summary(await startArticle('manual', { checkpoint: b.checkpoint === true }))); }
+      if (rid === 'report') {                                   // weekly reports: read one, make one now, accept or decline its proposal
+        const wk = p[4];
+        if (wk === 'now' && M === 'POST') {
+          let b = {}; try { b = await readJson(req); } catch {}
+          const week = WEEK_RE.test(String(b.week || '')) ? progress.weekStart(b.week) : progress.weekStart(today());
+          return send(res, 200, (await makeReport(week, {})) || { week, status: 'error', error: '週報被較新的一次取代了' });
+        }
+        if (wk && WEEK_RE.test(wk)) {
+          if (!p[5] && M === 'GET') { const r = await loadReport(wk); if (!r) throw httpErr(404, '沒有這一週的週報'); return send(res, 200, r); }
+          if (p[5] === 'decision' && M === 'POST') return send(res, 200, await decideProposal(wk, (await readJson(req)).accept === true));
+        }
+      }
+      if (rid && reading.ID_RE.test(rid)) {
+        if (kioskNow && (await loadArticle(rid).catch(() => null) || {}).source === 'newsletter') throw httpErr(404, '找不到這篇文章');     // a newsletter is mail content: not on a public computer
+        const withDraft = (a) => ({ ...reading.view(a), draftOpen: !!(a.draft && draftExists(a.draft)) });
+        if (!p[4] && M === 'GET') return send(res, 200, { ...withDraft(await loadArticle(rid)), fc: fcBrief(await loadFc(rid)) });
+        if (p[4] === 'factcheck' && !p[5] && M === 'GET') return send(res, 200, (await loadFc(rid)) || { status: 'none', items: [] });
+        if (p[4] === 'factcheck' && p[5] === 'apply' && M === 'POST') { const b = await readJson(req); return send(res, 200, await applyFactcheck(rid, Array.isArray(b.ids) ? b.ids.map(String) : [], b.action === 'ignore' ? 'ignore' : 'apply')); }
+        if (p[4] === 'sfb' && M === 'POST') return send(res, 200, withDraft(await retrySummaryFeedback(rid)));
+        if (p[4] === 'gloss' && M === 'POST') return send(res, 200, await glossWord(rid, await readJson(req)));
+        if (p[4] === 'para' && M === 'POST') return send(res, 200, await translatePara(rid, await readJson(req)));
+        if (p[4] === 'simplify' && M === 'POST') return send(res, 200, withDraft(await simplifyArticle(rid)));
+        if (p[4] === 'finish' && M === 'POST') return send(res, 200, await finishArticle(rid, await readJson(req)));
+        if (p[4] === 'note' && M === 'POST') {     // the draft was deleted before upload: make it again
+          const a = await loadArticle(rid);
+          if (!a.finishedAt) throw httpErr(409, '讀完之後才會整理筆記');
+          if (a.note) throw httpErr(409, '這篇已經有筆記了');
+          if (a.draft && draftExists(a.draft)) return send(res, 200, { draft: a.draft });
+          return send(res, 201, { draft: (await readingDraft(a)).id });
+        }
+      }
+    }
     // every to-do in the vault: open ones (due date first), done ones separately
     if (p[2] === 'tasks' && !p[3] && M === 'GET') return send(res, 200, await listTasks());
     if (p[2] === 'tasks' && p[3] === 'toggle' && M === 'POST') {
@@ -2374,14 +3201,21 @@ async function route(req, res) {
     // read-only browsing of the whole vault (hidden: dot folders and CFG.vaultExclude)
     if (p[2] === 'vault' && M === 'GET') {
       const q = url.searchParams;
+      // a public computer does not see the mail folder: paths are normalized first, so "..", other slashes and capitals do not get around it
+      const mailPrefix = `${CFG.folder}/${MAIL_FOLDER}`.toLowerCase();
+      const hideMail = (rel) => { if (!kioskNow || !rel) return false; const n = path.posix.normalize(String(rel).replace(/\\/g, '/')).replace(/^(\.\/|\/)+/, '').toLowerCase(); return n === mailPrefix || n.startsWith(mailPrefix + '/'); };
       try {
-        if (p[3] === 'list') return send(res, 200, vault.list(q.get('dir') || ''));
-        if (p[3] === 'note') return send(res, 200, vault.readNote(q.get('path')), 'text/markdown; charset=utf-8');
-        if (p[3] === 'search') return send(res, 200, vault.search(q.get('q')));
-        if (p[3] === 'resolve') { const r = vault.resolve(q.get('name'), q.get('kind') === 'raw' ? 'raw' : 'note'); return r ? send(res, 200, { path: r }) : send(res, 404, { error: '找不到這篇筆記（可能還沒建立）' }); }
+        if (p[3] === 'list') {
+          if (hideMail(q.get('dir'))) throw httpErr(404, '找不到這個資料夾');
+          const r = vault.list(q.get('dir') || '');
+          return send(res, 200, { ...r, folders: r.folders.filter((f) => !hideMail(f.path)), notes: r.notes.filter((n) => !hideMail(n.path)) });
+        }
+        if (p[3] === 'note') { if (hideMail(q.get('path'))) throw httpErr(404, '找不到這篇筆記'); return send(res, 200, vault.readNote(q.get('path')), 'text/markdown; charset=utf-8'); }
+        if (p[3] === 'search') return send(res, 200, vault.search(q.get('q'), kioskNow ? 200 : 50).filter((x) => !hideMail(x.path)).slice(0, 50));
+        if (p[3] === 'resolve') { const r0 = vault.resolve(q.get('name'), q.get('kind') === 'raw' ? 'raw' : 'note'), r = hideMail(r0) ? null : r0; return r ? send(res, 200, { path: r }) : send(res, 404, { error: '找不到這篇筆記（可能還沒建立）' }); }
         if (p[3] === 'raw') {
           const rel = q.get('path') || vault.resolve(q.get('name'), 'raw');
-          if (!rel) return send(res, 404, { error: 'not found' });
+          if (!rel || hideMail(rel)) return send(res, 404, { error: 'not found' });
           const f = vault.raw(rel);
           const buf = await fsp.readFile(f.abs).catch(() => null);
           // no-store: nothing left behind on a public computer; CSP sandbox: an SVG opened directly cannot run script on this origin
@@ -2516,6 +3350,18 @@ if (rules.ensureLocal(CFG.localPromptFile)) log('created', CFG.localPromptFile);
       }
     } catch (e) { log('learn recover', t.id, e.message); }
   }
+  // an article being prepared (or simplified) when the server stopped: show it as failed so the user can ask again
+  for (const a of await listArticles().catch(() => [])) {
+    if (a.status === 'processing' || (a.simp && a.simp.status === 'processing') || (a.sfb && a.sfb.status === 'processing')) await updateArticle(a.id, (x) => {
+      if (x.sfb && x.sfb.status === 'processing') x.sfb = { status: 'error', error: '伺服器重新啟動，回饋中斷，請按「再試一次」' };
+      if (x.status === 'processing') Object.assign(x, { status: 'error', stage: '', error: '伺服器重新啟動，準備中斷，請再按一次「找一篇文章」' });
+      if (x.simp && x.simp.status === 'processing') x.simp = { status: 'error', error: '伺服器重新啟動，請再按一次「太難了」' };
+    }).catch((e) => log('reading recover', a.id, e.message));
+  }
+  for (const w of await listReportWeeks().catch(() => [])) {          // a report that was being written when the server stopped
+    const r = await loadReport(w);
+    if (r && r.status === 'processing') await updateReport(w, (x) => { x.status = 'error'; x.error = '伺服器重新啟動，週報中斷，請按「重新產生」'; }).catch((e) => log('report recover', w, e.message));
+  }
   repairExpansionLinks();
   let resumed = 0;
   for (const j of agentJobs()) if (j.status === 'running') { j.status = 'queued'; resumed++; }
@@ -2536,7 +3382,10 @@ if (rules.ensureLocal(CFG.localPromptFile)) log('created', CFG.localPromptFile);
     };
     setTimeout(weekly, 5 * 60 * 1000); setInterval(weekly, 3600 * 1000);
     version.local().then((v) => log('version', v.version || '(unknown)', v.sha || ''));
-    if (CFG.updateCheckHours > 0) { setTimeout(() => version.check(), 60 * 1000); setInterval(() => version.check(), CFG.updateCheckHours * 3600 * 1000); }
+    // the interval is read on every tick, so changing updateCheckHours on the settings page works without a restart
+    let lastVersionCheck = 0;
+    const versionTick = () => { const h = CFG.updateCheckHours; if (h > 0 && Date.now() - lastVersionCheck >= h * 3600 * 1000 - 60 * 1000) { lastVersionCheck = Date.now(); version.check(); } };
+    setTimeout(versionTick, 60 * 1000); setInterval(versionTick, 10 * 60 * 1000);
   });
   if (CFG.publicPort) http.createServer((req, res) => {
     publicRoute(req, res).catch((e) => {

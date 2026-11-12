@@ -344,10 +344,16 @@ function renderMain(main, units, results) {
 const EMPTY_MAX_BYTES = 64; // "empty" = only whitespace, and tiny
 
 // all .md files in the vault, excluding dot folders (.trash, .obsidian, .stversions…), attachments and airw-index.md
+// folders (vault-relative, e.g. 'Claude-Notes/信件') whose notes come from outside: no scan of the vault looks inside them
+let UNTRUSTED = [];
+const setUntrusted = (list) => { UNTRUSTED = (list || []).map((x) => String(x).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').toLowerCase()).filter(Boolean); };
 function walkVault(vault) {
   const out = [];
+  const root = path.resolve(vault);
   const walk = (dir, depth) => {
     if (depth > 8) return;
+    if (UNTRUSTED.length && UNTRUSTED.includes(path.relative(root, dir).split(path.sep).join('/').toLowerCase())) return;
+
     let ents; try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of ents) {
       if (e.name.startsWith('.')) continue;
@@ -551,6 +557,6 @@ function appendExpansion(md, exp, { model, stamp }) {
   return at >= 0 ? s.slice(0, at).replace(/\s+$/, '\n') + block + s.slice(at) : s.replace(/\s*$/, '\n') + block;
 }
 
-module.exports = { RESEARCH_FOLDER, EXPAND_HEAD, needsExpansion, expandPrompt, parseExpansion, appendExpansion, noteNameSet, nameExists, unlinkUnknown, cleanExpansionLinks, parseResearch, librarianPrompt, parsePlan, resolveTarget, safeName, applyPlan, renderMain, linkTo,
+module.exports = { setUntrusted, RESEARCH_FOLDER, EXPAND_HEAD, needsExpansion, expandPrompt, parseExpansion, appendExpansion, noteNameSet, nameExists, unlinkUnknown, cleanExpansionLinks, parseResearch, librarianPrompt, parsePlan, resolveTarget, safeName, applyPlan, renderMain, linkTo,
   walkVault, scanVault, grayNames, emptyLinkedNotes, linkContext, fillNoteMarkdown, isEmptyFile, findCaseless, relatedResearch, relatedSection,
   candidateNotes };

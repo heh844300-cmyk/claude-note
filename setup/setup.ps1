@@ -390,7 +390,7 @@ if ($mobileUrl) {
     Say ""
     Say "【手機】手機開著 Tailscale，用相機掃下面的 QR code（或直接輸入 $mobileUrl ）：" Cyan
     & node (Join-Path $PSScriptRoot "qr-term.js") $mobileUrl
-    Say "打開後在瀏覽器選單選「加到主畫面」，再到「新增」頁按「開啟通知」。" Gray
+    Say "打開後在瀏覽器選單選「加到主畫面」，再按右上角「⚙️ 設定・通知」→「開啟通知」。" Gray
     if ($funnelOn) {
         Say ""
         Say "【公用電腦】在外面的電腦打開 https://${hostName}:8443 ，用手機掃畫面上的 QR code 核准。" Cyan

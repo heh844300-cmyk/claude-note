@@ -37,13 +37,15 @@ function excerpt(md, max) {
   return s.slice(0, max).trim();
 }
 
-function createRelated({ vault }) {
+// skip: vault-relative folders left out of the corpus (notes that came from outside, e.g. mail)
+function createRelated({ vault, skip = [] }) {
+  const skipDirs = skip.map((x) => String(x).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').toLowerCase() + '/').filter((x) => x !== '/');
   // all readable notes: { rel, name, md, tf }
   function corpus(excludeRels = []) {
     const ex = new Set(excludeRels.map((r) => String(r).toLowerCase()));
     const out = [];
     for (const rel of vault.notes().slice(0, 5000)) {
-      if (SKIP.has(path.posix.basename(rel).toLowerCase()) || ex.has(rel.toLowerCase())) continue;
+      if (SKIP.has(path.posix.basename(rel).toLowerCase()) || ex.has(rel.toLowerCase()) || skipDirs.some((d) => rel.toLowerCase().startsWith(d))) continue;
       let md; try { md = vault.readNote(rel); } catch { continue; }
       if (md.trim().length < 20) continue;                  // empty notes (gray links not filled yet)
       // daily entries of a tracked note: dozens of near-identical logs would crowd out real context

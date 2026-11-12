@@ -197,7 +197,36 @@ label.check { display: flex; align-items: center; gap: 8px; font-size: 14px; mar
 .mats li:first-child { border-top: 0; } .mats button { border: 0; background: none; color: var(--danger); padding: 0 6px; }
 #ltMatBox select, .field select { font: inherit; padding: 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
 .chat { margin: 10px 0; } .chat .cq { font-weight: 600; margin-top: 12px; } .chat .ca { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 4px 12px; margin-top: 4px; }
-.notesbox textarea { width: 100%; box-sizing: border-box; margin-top: 6px; }
+/* floating notes: a bottom sheet on a phone, a panel you drag and resize on a wide screen */
+.fnfab { position: fixed; right: 14px; bottom: calc(max(6px, env(safe-area-inset-bottom)) + 34px); z-index: 8; width: 52px; height: 52px; border-radius: 50%; padding: 0;
+  font-size: 22px; line-height: 1; background: var(--accent); color: var(--accent-text); border-color: transparent; box-shadow: 0 4px 14px rgba(0,0,0,.28); }
+.fnpanel { position: fixed; z-index: 9; left: 0; right: 0; bottom: 0; height: 300px; display: flex; flex-direction: column; background: var(--card);
+  border: 1px solid var(--line); border-radius: 16px 16px 0 0; box-shadow: 0 -4px 24px rgba(0,0,0,.2); padding-bottom: env(safe-area-inset-bottom); }
+.fnhead { position: relative; display: flex; align-items: center; gap: 8px; padding: 16px 12px 6px; touch-action: none; user-select: none; -webkit-user-select: none; cursor: ns-resize; }
+.fnhead::before { content: ''; position: absolute; top: 6px; left: 50%; width: 40px; height: 4px; margin-left: -20px; border-radius: 2px; background: var(--muted); opacity: .5; }
+.fnhead b { font-size: 15px; white-space: nowrap; } .fnhead .hint { flex: 1; margin: 0; min-width: 0; } .fnhead button { white-space: nowrap; }
+.fntabs { margin: 0 12px 8px; } .fntabs button { padding: 6px 4px; font-size: 14px; white-space: nowrap; }
+.fntabs button.has::after { content: ' •'; }
+.fnbody { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 0 12px 10px; }
+.fnsec { flex: 1; min-width: 0; min-height: 0; display: none; flex-direction: column; }
+.fnsec > span { display: none; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+.fnsec textarea { flex: 1; min-height: 0; resize: none; background: var(--bg); }
+.fnpanel[data-tab=cues] .fnsec[data-sec=cues], .fnpanel[data-tab=notes] .fnsec[data-sec=notes], .fnpanel[data-tab=sum] .fnsec[data-sec=sum] { display: flex; }
+.fnpanel.plain .fntabs, .fnpanel.plain .fnsec { display: none; } .fnpanel.plain .fnsec[data-sec=notes] { display: flex; }
+/* enough room: the Cornell sheet itself (cues left, notes right, summary underneath) */
+.fnpanel.cols:not(.plain) .fntabs { display: none; }
+.fnpanel.cols:not(.plain) .fnbody { display: grid; grid-template-columns: minmax(0, 34%) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(76px, 28%); }
+.fnpanel.cols:not(.plain) .fnsec { display: flex; } .fnpanel.cols:not(.plain) .fnsec > span { display: block; }
+.fnpanel.cols:not(.plain) .fnsec[data-sec=sum] { grid-column: 1 / -1; }
+@media (min-width: 700px) {
+  .fnpanel { right: auto; bottom: auto; border-radius: 14px; resize: both; overflow: hidden; min-width: 280px; min-height: 220px; max-width: 96vw; max-height: 92vh;
+    padding-bottom: 0; box-shadow: 0 8px 30px rgba(0,0,0,.28); }
+  .fnhead { cursor: move; padding-top: 8px; } .fnhead::before { display: none; }
+  .fnbody { padding-bottom: 16px; }
+}
+.fnsel { position: fixed; z-index: 11; display: flex; gap: 6px; }
+.fnsel button { padding: 7px 12px; font-size: 14px; white-space: nowrap; background: var(--text); color: var(--bg); border-color: transparent; box-shadow: 0 3px 12px rgba(0,0,0,.3); }
+.fnopen { margin-bottom: 0; }
 .qtypes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
 .qtypes label { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 14px; }
 .qtypes input { width: 64px; font: inherit; padding: 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
@@ -255,3 +284,72 @@ label.check { display: flex; align-items: center; gap: 8px; font-size: 14px; mar
 #llMode.llmode { margin: 12px 0 6px; } #llMode.llmode button { font-size: 13px; padding: 7px 4px; }
 #llMode.llmode button:disabled { opacity: .45; }
 #llPending { margin: 4px 0 0; }
+/* header: title + settings, icon tabs */
+.hrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.hrow h1 { margin: 0; }
+.setbtn { padding: 4px 10px; font-size: 13px; color: var(--muted); }
+nav button { position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 4px 0 6px; font-size: 13px; }
+nav .ic { font-size: 20px; line-height: 1.2; }
+nav .badge { position: absolute; top: 0; left: 50%; margin-left: 8px; font-size: 11px; line-height: 16px; padding: 0 5px; }
+/* flow strip on the 記錄 tab */
+.flow { display: flex; gap: 6px; list-style: none; padding: 0; margin: 0 0 12px; }
+.flow li { flex: 1; display: flex; align-items: center; gap: 6px; font-size: 13px; line-height: 1.35; color: var(--muted);
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; }
+.flow b { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 12px;
+  background: var(--accent); color: var(--accent-text); }
+/* first-use welcome card */
+.welcome { border-color: var(--accent); }
+.wgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0 6px; }
+.wgrid button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 8px 10px; background: var(--bg); }
+.wgrid b { font-size: 15px; } .wgrid span { font-size: 13px; color: var(--muted); line-height: 1.35; }
+/* empty states that teach */
+.empty.guide { background: var(--card); border: 1px dashed var(--line); border-radius: 12px; padding: 16px; }
+.empty.guide p { margin: 0 0 10px; }
+.empty.guide b { color: var(--text); }
+/* long explanations folded away */
+details.what { margin: 4px 0 8px; }
+details.what summary { cursor: pointer; font-size: 13px; }
+#tab-settings h2 { font-size: 18px; margin: 4px 0 8px; }
+
+/* daily English reading */
+.enentry { display: block; width: 100%; text-align: left; }
+.enentry small { display: block; color: var(--muted); font-size: 13px; font-weight: 400; margin-top: 2px; }
+.entext { font-size: 17px; line-height: 1.75; margin: 10px 0; }
+.entext p { margin: 0 0 14px; } .entext p.li { padding-left: 14px; text-indent: -14px; } .entext h3 { font-size: 17px; margin: 18px 0 8px; }
+.entext .w { cursor: pointer; border-radius: 4px; }
+.entext .w.on { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.engloss { position: fixed; left: 12px; right: 12px; bottom: 14px; z-index: 20; background: var(--text); color: var(--bg); border-radius: 12px; padding: 12px 14px;
+  font-size: 16px; box-shadow: 0 4px 18px rgba(0, 0, 0, .35); word-break: break-word; max-width: 720px; margin: 0 auto; }
+.enq { margin: 10px 0; } .enq > div:first-child { font-weight: 600; margin-bottom: 4px; word-break: break-word; }
+.enopt { display: block; padding: 6px 8px; border-radius: 8px; margin: 2px 0; word-break: break-word; }
+.enopt.ok { background: color-mix(in srgb, #2e9e5b 22%, transparent); } .enopt.no { background: var(--err-bg); }
+#enRefBox textarea, #enSetBox textarea { width: 100%; margin-top: 6px; }
+#enRefQ { margin: 6px 0; } #enHard { margin: 4px 0; } #enSetBox select { margin-top: 4px; }
+#enMeta a { color: var(--accent); }
+.entext .w.rv { text-decoration: underline dotted var(--accent); text-underline-offset: 4px; }
+#enInfo { white-space: pre-line; }
+.enq .qt { color: var(--muted); font-weight: 400; font-size: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 0 6px; white-space: nowrap; }
+/* settings page */
+#cfgForm h3 { font-size: 15px; margin: 16px 0 4px; }
+.cfgrow { display: block; padding: 8px 0; border-top: 1px solid var(--line); }
+.cfgrow span { display: block; } .cfgrow b { font-weight: 600; font-size: 15px; }
+.cfgrow em { font-style: normal; color: var(--muted); font-size: 12px; margin-left: 6px; }
+.cfgrow small { display: block; color: var(--muted); font-size: 12px; margin: 2px 0 6px; }
+.cfgrow input[type=number], .cfgrow input[type=time] { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; width: 130px; max-width: 100%; }
+.cfgrow.sw { display: flex; align-items: center; justify-content: space-between; gap: 12px; } .cfgrow.sw small { margin-bottom: 0; }
+.cfgrow.sw input { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+/* online translation of a paragraph */
+.zbr { text-align: right; margin: -6px 0 10px; }
+.zb { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 8px; padding: 2px 8px; font-size: 14px; cursor: pointer; }
+.zb:disabled { opacity: .6; }
+.entext p.zh { color: var(--muted); font-size: 15px; margin: -8px 0 14px; padding-left: 10px; border-left: 2px solid var(--line); }
+/* reading progress: banner, report table, fact check */
+.enbn { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 6px 0; font-size: 14px; word-break: break-word; }
+.enrep { width: 100%; border-collapse: collapse; margin: 8px 0 12px; font-size: 14px; }
+.enrep th, .enrep td { border-bottom: 1px solid var(--line); padding: 6px 4px; text-align: left; vertical-align: top; }
+.enrep th:not(:first-child), .enrep td:not(:first-child) { text-align: right; white-space: nowrap; }
+.enrep small { display: block; color: var(--muted); font-size: 12px; }
+.enadv { white-space: pre-line; margin: 6px 0 0; }
+.enfc { border-top: 1px solid var(--line); padding: 8px 0; word-break: break-word; }
+.enfc blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--muted); }
+#mailInfo { white-space: pre-line; }

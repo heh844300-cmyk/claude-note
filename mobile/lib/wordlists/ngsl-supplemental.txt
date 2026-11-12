@@ -1,0 +1,56 @@
+# NGSL 1.2 supplemental words (days, months, numbers) — 52 headwords
+# Browne, C., Culligan, B., & Phillips, J. (2013). Retrieved from https://www.newgeneralservicelist.com
+# Licensed under Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0).
+# Changes: reduced to "headword inflected-forms" per line, lowercased.
+monday mondays
+tuesday tuesdays
+wednesday wednesdays
+thursday thursdays
+friday fridays
+saturday saturdays
+sunday sundays
+january januarys januaries
+february februarys februaries
+march marchs marched marching marchings
+april aprils
+may mays
+june junes
+july julys
+august augusts
+september septembers
+october octobers
+november novembers
+december decembers
+two twos
+three threes third thirds
+four fours fourth fourths
+five fives fifth fifths
+six sixs sixth sixths
+seven sevens seventh sevenths
+eight eights eighth eighths
+nine nines ninth ninths
+ten tens tenth tenths
+eleven elevens eleventh elevenths
+twelve twelves twelfth twelfths
+thirteen thirteens thirteenth thirteenths
+fourteen fourteens fourteenth fourteenths
+fifteen fifteens fifteenth fifteenths
+sixteen sixteens sixteenth sixteenths
+seventeen seventeens seventeenth seventeenths
+eighteen eighteens eighteenth eighteenths
+nineteen nineteens nineteenth nineteenths
+twenty twentys twenties twentieth twentieths
+thirty thirtys thirties thirtieth thirtieths
+forty fortys forties fortieth fortieths
+fifty fiftys fifties fiftieth fiftieths
+sixty sixtys sixties sixtieth sixtieths
+seventy seventys seventies seventieth seventieths
+eighty eightys eighties eightieth eightieths
+ninety ninetys nineties ninetieth ninetieths
+hundred hundreds hundredth hundredths
+thousand thousands thousandth thousandths
+million millions millionth millionths
+billion billions billionth billionths
+trillion trillions trillionth trillionths
+quadrillion quadrillions quadrillionth quadrillionths
+quintillion quintillions quintillionth quintillionths

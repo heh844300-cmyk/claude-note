@@ -179,6 +179,8 @@ assert(autoP.includes('先判斷') && autoP.includes('「外鍵指向哪裡？�
 assert(L.noteTitle({ n: 3, title: '網路初探：拓撲與元件' }) === '網路初探：拓撲與元件' && L.noteTitle({ n: 2, title: ' ' }) === '未命名章節', 'note title = chapter subject only, never a chapter number');
 const lr = L.LEARN_RULES(topic, { n: 3, title: '網路初探' }), nm = L.notesMaterial(topic, { chapter: { n: 3, title: '網路初探' }, notes: 'x' });
 assert(!/第 ?3 ?章/.test(lr) && !/第 ?3 ?章/.test(nm) && lr.includes('不要寫「第幾章」') && lr.includes('「網路初探」'), 'organizer told not to write chapter numbers; material has none');
+assert(lr.includes('康乃爾筆記法') && lr.includes('「## 複習線索」') && lr.includes('不要替他回答') && lr.includes('不要寫成待辦事項'), 'organizer keeps Cornell cues as a review section (not answered, not to-dos) and the summary in the user\'s words');
+assert(L.notesMaterial(topic, { notes: require('../public/cornell.js').serialize({ cues: '為什麼要握手？', notes: '重點', sum: '結論' }) }).includes('===== 我的筆記 =====\n## 🔑 線索\n為什麼要握手？\n\n## ✏️ 筆記\n重點\n\n## 📝 總結\n結論'), 'Cornell notes reach the organizer with their three headings');
 
 // supplementary lessons: kept when the lesson is cut to fit, and a supplement-only note appended to the chapter's note
 const longLesson = '### 本文\n' + 'x'.repeat(9000) + '\n\n---\n' + L.SUPP_MARK + '新教材的內容（2026-11-11）\n\n### 網路拓撲\n星狀拓撲';

@@ -82,7 +82,7 @@ function htmlToText(html) {
   s = decode(s).replace(/[ \t\f\v]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
   return (title ? '標題：' + decode(title).trim() + '\n\n' : '') + s;
 }
-async function fetchUrl(u, { timeoutMs = 15000, maxBytes = 2 * 1024 * 1024, maxChars = 12000, maxRedirects = 5 } = {}) {
+async function fetchUrl(u, { timeoutMs = 15000, maxBytes = 2 * 1024 * 1024, maxChars = 12000, maxRedirects = 5, keepHtml = false } = {}) {
   let url = checkUrl(u);
   for (let hop = 0; hop <= maxRedirects; hop++) {
     const { res, body, truncated } = await requestOnce(url, { timeoutMs, maxBytes });
@@ -97,7 +97,7 @@ async function fetchUrl(u, { timeoutMs = 15000, maxBytes = 2 * 1024 * 1024, maxC
     let text = /html/i.test(type) || /^\s*</.test(raw) ? htmlToText(raw) : raw;
     if (text.length > maxChars) text = text.slice(0, maxChars) + '\n…（內容過長，已截斷）';
     if (truncated) text += '\n…（網頁過大，只讀了前段）';
-    return { url: url.href, text };
+    return keepHtml ? { url: url.href, text, html: raw } : { url: url.href, text };   // keepHtml: the reading feature extracts the article itself
   }
   throw new Error('轉址次數太多');
 }

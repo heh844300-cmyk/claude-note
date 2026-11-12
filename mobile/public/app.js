@@ -21,7 +21,8 @@ let current = 'new';
 function show(tab) {
   current = tab;
   document.querySelectorAll('.tab').forEach((s) => (s.hidden = s.id !== 'tab-' + tab));
-  const navTab = tab === 'edit' ? 'drafts' : tab === 'read' ? 'notes' : tab === 'vread' ? 'vault' : tab;
+  fnSync();                                         // the floating notes only belong to a lesson or a quiz
+  const navTab = tab === 'edit' ? 'drafts' : tab === 'read' ? 'notes' : tab === 'vread' ? 'vault' : tab === 'eng' ? 'learn' : tab;
   document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === navTab));
   if (tab === 'drafts') loadDrafts();
   if (tab === 'notes') loadNotes();
@@ -29,10 +30,21 @@ function show(tab) {
   if (tab === 'tasks') loadTasks();
   if (tab === 'new') loadSeries();
   if (tab === 'learn') loadLearn();
+  if (tab === 'eng' && !enOpening) loadEng();
+  if (tab === 'settings') loadMail();   // opening one article directly: no list load (its polling would fight the article's)
   window.scrollTo(0, 0);
 }
 document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => show(b.dataset.tab)));
 document.querySelectorAll('[data-back]').forEach((b) => b.addEventListener('click', () => show(b.dataset.back)));
+// shortcuts from the welcome card, empty states and the settings button
+document.addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) show(b.dataset.go); });
+
+// ---- welcome card: shown on first use instead of the changelog, until dismissed ----
+const WELCOME_KEY = 'cn-welcome';
+const showWelcome = () => { try { localStorage.setItem(WELCOME_KEY, '1'); } catch {} $('#welcome').hidden = false; show('new'); };
+$('#welcomeOk').onclick = () => { try { localStorage.removeItem(WELCOME_KEY); } catch {} $('#welcome').hidden = true; $('#newText').focus(); };
+$('#welcomeAgain').onclick = showWelcome;
+try { if (localStorage.getItem(WELCOME_KEY) === '1') $('#welcome').hidden = false; } catch {}
 
 // ---------- new ----------
 let picked = [];
@@ -75,7 +87,7 @@ async function loadDrafts() {
   const b = $('#draftCount'); b.hidden = !list.length; b.textContent = list.length;
   if (current === 'drafts') {
     $('#draftEmpty').hidden = list.length > 0;
-    const grp = (d) => (d.series ? `<span class="pill grp">📌 ${esc(d.series)}</span>` : '') + (d.learn ? `<span class="pill grp">📚 ${esc(d.learn)}</span>` : '') + (d.update ? `<span class="pill grp">🔄 更新${d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length ? '・⚠️' + d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length : ''}</span>` : !d.group ? '' : d.group.role === 'overview' ? `<span class="pill grp">📑 總覽・${d.group.size} 篇</span>` : `<span class="pill grp">🧩 ${d.group.index}／${d.group.size}</span>`);
+    const grp = (d) => (d.series ? `<span class="pill grp">📌 ${esc(d.series)}</span>` : '') + (d.learn ? `<span class="pill grp">📚 ${esc(d.learn)}</span>` : '') + (d.reading ? '<span class="pill grp">📖 英文閱讀</span>' : '') + (d.mail ? `<span class="pill grp">✉️ ${esc(d.mail)}${d.mailTag ? '・' + esc(d.mailTag) : ''}</span>` : '') + (d.update ? `<span class="pill grp">🔄 更新${d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length ? '・⚠️' + d.update.warnings.filter((w) => !w.startsWith('ℹ️')).length : ''}</span>` : !d.group ? '' : d.group.role === 'overview' ? `<span class="pill grp">📑 總覽・${d.group.size} 篇</span>` : `<span class="pill grp">🧩 ${d.group.index}／${d.group.size}</span>`);
     $('#draftList').innerHTML = list.map((d) => `<li data-id="${d.id}"${d.group && d.group.role === 'topic' ? ' class="in-group"' : ''}>
       <div class="t">${grp(d)}${esc(d.title || d.preview || '（未命名）')}</div>
       <div class="m"><span class="pill ${d.status}">${STATUS[d.status] || d.status}</span>${esc(d.status === 'processing' ? d.stage : fmtTime(d.createdAt))}
@@ -355,7 +367,7 @@ async function loadNotes() {
   let list = [];
   try { list = await api('/api/notes' + (noteFolder === 'research' ? '?folder=research' : '')); } catch (e) { toast('讀取失敗：' + e.message); }
   $('#noteEmpty').hidden = list.length > 0;
-  $('#noteEmpty').textContent = noteFolder === 'research' ? '還沒有研究筆記' : '還沒有上傳的筆記';
+  $('#noteEmpty').textContent = noteFolder === 'research' ? '還沒有研究筆記。整理筆記時拆出的名詞解釋、Agent 查到的資料會放在這裡。' : '還沒有存進筆記庫的筆記。在「📥 草稿」確認後按「上傳到 Obsidian」，就會出現在這裡。';
   $('#noteList').innerHTML = list.map((n) => `<li data-name="${esc(n.name)}"><div class="t">${esc(n.name.replace(/^研究\//, '').replace(/\.md$/i, ''))}</div>
     <div class="m">${fmtTime(new Date(n.mtime).toISOString())}${n.reminders ? ' · ⏰' + n.reminders : ''}${n.expires ? ' · 🗑️' + esc(n.expires.slice(5, 10).replace('-', '/')) + ' 到期' : ''}${AGENT_LABEL[n.agent] ? ' · ' + AGENT_LABEL[n.agent] : ''}</div></li>`).join('');
 }
@@ -865,7 +877,10 @@ let updateShown = false;
 function maybeShowUpdate() {
   const v = verInfo && verInfo.version; if (!v || updateShown) return;
   updateShown = true;
-  if (seenGet() !== v) openChangelog(true);
+  const seen = seenGet();
+  // first use: a changelog means nothing to a newcomer, show what the app does instead
+  if (seen === null && !isKioskMode()) { seenSet(v); return showWelcome(); }
+  if (seen !== v) openChangelog(true);
 }
 const chEntry = (e) => `<section class="chent"><h3>${esc(e.version)}${e.date ? ` <small>${esc(e.date)}</small>` : ''}</h3><div class="md">${renderMd(e.body)}</div></section>`;
 async function openChangelog(afterUpdate) {
@@ -905,7 +920,7 @@ const isKiosk = () => document.body.classList.contains('kiosk-mode');
 const lnApi = (p, o) => api('/api/learn' + p, o);
 const jbody = (m, b) => ({ method: m, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) });
 const enc = encodeURIComponent;
-function lnShow(v) { document.querySelectorAll('#tab-learn .lview').forEach((x) => (x.hidden = x.id !== v)); clearTimeout(lnTimer); window.scrollTo(0, 0); }
+function lnShow(v) { document.querySelectorAll('#tab-learn .lview').forEach((x) => (x.hidden = x.id !== v)); clearTimeout(lnTimer); window.scrollTo(0, 0); fnSync(); }
 const lnPoll = (fn, ms = 3000) => { clearTimeout(lnTimer); lnTimer = setTimeout(fn, ms); };
 document.querySelectorAll('[data-lback]').forEach((b) => (b.onclick = () => (b.dataset.lback === 'lnList' ? loadLearn() : openTopic(lnTopic))));
 const shortDate = (s) => (s ? s.slice(5).replace('-', '/') : '');
@@ -1061,14 +1076,14 @@ $('#ltOutlineBtn').onclick = () => vaultOpen(lnData.links.outline, '還沒有大
 
 const LEVEL_NAMES = ['', '基礎建立', '標準入門', '概念應用', '進階變形', '大師挑戰'];
 // ---- lesson ----
-let llNotesTimer = null;
 const chatOpen = {}; // lesson chat: which question/answer pairs the user opened or closed
 async function openLesson(n, start = true) {
   const entering = lnLessonN !== n || $('#lnLesson').hidden;
   lnLessonN = n;
+  if (entering) await fnSave();                     // notes still being saved must be on the server before they are read back
   let r; try { r = await lnApi(`/${enc(lnTopic)}/lesson/${n}`); } catch (e) { return toast(e.message); }
   const l = r.lesson, c = r.chapter;
-  if (entering) { lnShow('lnLesson'); $('#llNotes').value = (l && l.notes) || ''; $('#llSaved').textContent = ''; }
+  if (entering) { lnShow('lnLesson'); fnBind({ kind: 'lesson', cornell: true, path: `/${enc(lnTopic)}/lesson/${n}/notes`, placeholder: '邊學邊記；這一章結束時會連同教學重點整理成筆記，放進 Claude Note' }, (l && l.notes) || ''); }
   $('#llTitle').textContent = `第${r.pos || '?'}章 ${c.title}`;
   if ((!l || l.status === 'none') && start) {
     try { await lnApi(`/${enc(lnTopic)}/lesson/${n}`, { method: 'POST' }); } catch (e) { return toast(e.message); }
@@ -1140,23 +1155,16 @@ $('#llAskBtn').onclick = async () => {
 $('#llMoreBtn').onclick = async () => {
   try { await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/ask`, jbody('POST', { more: true })); openLesson(lnLessonN, false); } catch (e) { toast(e.message); }
 };
-async function saveLessonNotes() {
-  clearTimeout(llNotesTimer);
-  if (lnLessonN == null) return;
-  try { await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/notes`, jbody('PUT', { notes: $('#llNotes').value })); $('#llSaved').textContent = '已自動儲存'; } catch { $('#llSaved').textContent = '⚠️ 沒存到'; }
-}
-$('#llNotes').addEventListener('input', () => { $('#llSaved').textContent = '…'; clearTimeout(llNotesTimer); llNotesTimer = setTimeout(saveLessonNotes, 1500); });
-$('#llNotes').addEventListener('blur', () => { if ($('#llSaved').textContent === '…') saveLessonNotes(); });
 $('#llRedo').onclick = async () => {
   if (!confirm('重新準備這一章的教學內容？你的筆記和問答會保留。')) return;
   try { await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}`, { method: 'POST' }); openLesson(lnLessonN, false); } catch (e) { toast(e.message); }
 };
 $('#llQuizBtn').onclick = async () => {
-  await saveLessonNotes();
+  await fnSave();
   try { const r = await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/quiz`, { method: 'POST' }); openQuiz(r.id, 'lnLesson'); } catch (e) { toast(e.message); }
 };
 $('#llFinish').onclick = async () => {
-  await saveLessonNotes();
+  await fnSave();
   if (!confirm('完成這一章？你的筆記會連同教學重點和小測驗結果交給 AI 整理成草稿，你看過再上傳。')) return;
   try { const r = await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/finish`, jbody('POST', {})); toast('這章完成了 ✅ 筆記整理中', 3500); openDraft(r.draft); }
   catch (e) { toast(e.message, 4000); }
@@ -1184,7 +1192,7 @@ $('#qcGo').onclick = async () => {
 };
 
 // ---- taking a quiz / results ----
-let lqNotesTimer = null, lqData = null;
+let lqData = null;
 const draftKey = () => 'quiz-' + lnQuizId;
 function readAnswers() {
   const a = {};
@@ -1199,9 +1207,10 @@ async function openQuiz(id, back) {
   if (back) lnQuizBack = back;
   const entering = lnQuizId !== id || $('#lnQuiz').hidden;
   lnQuizId = id;
+  if (entering) await fnSave();
   let z; try { z = await lnApi(`/${enc(lnTopic)}/quiz/${id}`); } catch (e) { return toast(e.message); }
   lqData = z;
-  if (entering) { lnShow('lnQuiz'); $('#lqNotes').value = z.notes || ''; $('#lqSaved').textContent = ''; $('#lqForm').innerHTML = ''; $('#lqForm').dataset.mode = ''; }
+  if (entering) { lnShow('lnQuiz'); fnBind({ kind: 'quiz', cornell: false, path: `/${enc(lnTopic)}/quiz/${id}/notes`, placeholder: '記下這次搞懂或搞錯的地方' }, z.notes || ''); $('#lqForm').innerHTML = ''; $('#lqForm').dataset.mode = ''; }
   $('#lqTitle').textContent = '📝 ' + z.label;
   const busy = z.status === 'processing' || z.status === 'grading', graded = z.status === 'graded';
   $('#lqStatus').hidden = !busy && !z.error;
@@ -1231,6 +1240,7 @@ async function openQuiz(id, back) {
   if (z.status === 'processing' || z.status === 'error') { $('#lqForm').innerHTML = ''; $('#lqForm').dataset.mode = ''; }
   $('#lqSubmit').hidden = z.status !== 'ready';
   $('#lqNotesBox').hidden = !(z.status === 'ready' || z.status === 'grading' || graded);
+  fnSync();
   $('#lqFinish').hidden = !graded;
   if (busy) lnPoll(() => !$('#lnQuiz').hidden && openQuiz(id), 3000);
 }
@@ -1257,12 +1267,492 @@ $('#lqSubmit').onclick = async () => {
   try { await lnApi(`/${enc(lnTopic)}/quiz/${lnQuizId}/submit`, jbody('POST', { answers: a })); $('#lqForm').dataset.mode = 'submitted'; openQuiz(lnQuizId); } catch (e) { toast(e.message, 4000); }
   $('#lqSubmit').disabled = false;
 };
-async function saveQuizNotes() { clearTimeout(lqNotesTimer); try { await lnApi(`/${enc(lnTopic)}/quiz/${lnQuizId}/notes`, jbody('PUT', { notes: $('#lqNotes').value })); $('#lqSaved').textContent = '已自動儲存'; } catch { $('#lqSaved').textContent = '⚠️ 沒存到'; } }
-$('#lqNotes').addEventListener('input', () => { $('#lqSaved').textContent = '…'; clearTimeout(lqNotesTimer); lqNotesTimer = setTimeout(saveQuizNotes, 1500); });
 $('#lqFinish').onclick = async () => {
-  await saveQuizNotes();
+  await fnSave();
   try { const r = await lnApi(`/${enc(lnTopic)}/quiz/${lnQuizId}/finish`, jbody('POST', {})); toast('筆記整理中，好了在「草稿」確認後上傳', 4000); openDraft(r.draft); }
   catch (e) { toast(e.message, 4000); }
 };
 $('#lqBack').onclick = () => (lnQuizBack === 'lnLesson' ? openLesson(lnLessonN, false) : openTopic(lnTopic));
+
+// ---------- floating notes: one window for the lesson (Cornell: cues / notes / summary) and the quiz (one field) ----------
+// `var`: show() and lnShow() call fnSync() while the script is still loading, before this line has run
+var fn = { ctx: null, timer: null, dirty: false, saving: Promise.resolve(), open: false, pos: null, size: null, sheetH: 0 };
+const fnTa = { cues: $('#fnCues'), notes: $('#fnNotes'), sum: $('#fnSum') };
+const fnPref = (k, v) => { try { if (v === undefined) return JSON.parse(localStorage.getItem('fn-' + k)); localStorage.setItem('fn-' + k, JSON.stringify(v)); } catch {} return null; };
+const fnWide = () => window.innerWidth >= 700;                 // same breakpoint as the .fnpanel media query
+const fnClamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const fnText = () => (fn.ctx && fn.ctx.cornell ? Cornell.serialize({ cues: fnTa.cues.value, notes: fnTa.notes.value, sum: fnTa.sum.value }) : fnTa.notes.value);
+fn.pos = fnPref('pos'); fn.size = fnPref('size'); fn.sheetH = +fnPref('sheet') || 0; fn.open = fnWide() && fnPref('open') === true;
+function fnTab(k) {
+  $('#fnPanel').dataset.tab = k;
+  document.querySelectorAll('#fnTabs button').forEach((b) => { b.classList.toggle('active', b.dataset.sec === k); b.classList.toggle('has', !!fnTa[b.dataset.sec].value.trim()); });
+}
+// attach the window to one lesson / quiz: ctx = { kind, cornell, path, placeholder }
+function fnBind(ctx, text) {
+  clearTimeout(fn.timer); fn.ctx = ctx; fn.dirty = false;
+  const p = ctx.cornell ? Cornell.parse(text) : { cues: '', notes: String(text || ''), sum: '' };
+  for (const k in fnTa) fnTa[k].value = p[k];
+  fnTa.notes.placeholder = ctx.placeholder;
+  $('#fnPanel').classList.toggle('plain', !ctx.cornell);
+  $('#fnSel [data-to="cues"]').hidden = !ctx.cornell;
+  $('#fnSaved').textContent = '';
+  fnTab('notes'); fnSync();
+}
+// saves are chained so an older text never lands after a newer one; resolves when everything written so far is stored
+function fnSave() {
+  clearTimeout(fn.timer);
+  const ctx = fn.ctx; if (!ctx || !fn.dirty) return fn.saving;
+  fn.dirty = false; const text = fnText();
+  fn.saving = fn.saving.then(() => lnApi(ctx.path, jbody('PUT', { notes: text }))).then(
+    () => { if (fn.ctx === ctx && !fn.dirty) $('#fnSaved').textContent = '已自動儲存'; },
+    () => { if (fn.ctx === ctx) { fn.dirty = true; $('#fnSaved').textContent = '⚠️ 沒存到'; } });
+  return fn.saving;
+}
+function fnDirty() { fn.dirty = true; $('#fnSaved').textContent = '…'; clearTimeout(fn.timer); fn.timer = setTimeout(fnSave, 1500); fnTab($('#fnPanel').dataset.tab); }
+// the window belongs to the lesson page and to a quiz that takes notes; anywhere else it is put away (and saved)
+function fnSync() {
+  if (!fn) return;
+  const c = fn.ctx, on = !!c && !$('#tab-learn').hidden && (c.kind === 'lesson' ? !$('#lnLesson').hidden : !$('#lnQuiz').hidden && !$('#lqNotesBox').hidden);
+  if (!on) fnSave();
+  $('#fnPanel').hidden = !on || !fn.open; $('#fnFab').hidden = !on || fn.open;
+  if (!on) $('#fnSel').hidden = true;
+  fnLayout();
+}
+function fnToggle(open) { fn.open = open; fnPref('open', open); fnSync(); if (!open) fnSave(); }
+// phone: sits on top of the keyboard and leaves the text being read visible; wide screen: stays inside the window
+function fnLayout() {
+  const p = $('#fnPanel'), main = document.querySelector('main'), vv = window.visualViewport, vh = vv ? vv.height : window.innerHeight;
+  if (p.hidden) { main.style.paddingBottom = ''; return; }
+  if (fnWide()) {
+    const w = fnClamp((fn.size && fn.size.w) || 420, 280, window.innerWidth - 16), h = fnClamp((fn.size && fn.size.h) || 460, 220, window.innerHeight - 16);
+    const x = fnClamp(fn.pos ? fn.pos.x : window.innerWidth - w - 24, 0, Math.max(0, window.innerWidth - w)), y = fnClamp(fn.pos ? fn.pos.y : window.innerHeight - h - 24, 0, Math.max(0, window.innerHeight - h));
+    Object.assign(p.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px', bottom: '' });
+    main.style.paddingBottom = '';
+  } else {
+    const kb = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
+    const h = Math.round(fnClamp(fn.sheetH || vh * 0.42, 170, Math.max(170, vh * (kb > 60 ? 0.62 : 0.85))));
+    Object.assign(p.style, { left: '', top: '', width: '', height: h + 'px', bottom: kb + 'px' });
+    main.style.paddingBottom = h + 24 + 'px';             // the end of the lesson can still be scrolled above the sheet
+  }
+  p.classList.toggle('cols', p.offsetWidth >= 560 && p.offsetHeight >= 300);
+}
+for (const k in fnTa) fnTa[k].addEventListener('input', fnDirty);
+document.querySelectorAll('#fnTabs button').forEach((b) => (b.onclick = () => { fnTab(b.dataset.sec); fnTa[b.dataset.sec].focus(); }));
+$('#fnFab').onclick = () => fnToggle(true);
+$('#fnClose').onclick = () => fnToggle(false);
+document.querySelectorAll('[data-fnopen]').forEach((b) => (b.onclick = () => { fnToggle(true); if (fnWide()) fnTa.notes.focus(); }));
+$('#fnPanel').addEventListener('keydown', (e) => { if (e.key === 'Escape') fnToggle(false); });
+// the header is the handle: it moves the panel on a wide screen and changes the height of the sheet on a phone
+$('#fnHead').addEventListener('pointerdown', (e) => {
+  if (e.target.closest('button')) return;
+  const head = e.currentTarget, r = $('#fnPanel').getBoundingClientRect(), sx = e.clientX, sy = e.clientY, wide = fnWide();
+  e.preventDefault();                                        // keeps the focus (and the phone keyboard) where it is
+  try { head.setPointerCapture(e.pointerId); } catch {}
+  const move = (ev) => { if (wide) fn.pos = { x: r.left + ev.clientX - sx, y: r.top + ev.clientY - sy }; else fn.sheetH = r.height + sy - ev.clientY; fnLayout(); };
+  const up = () => {
+    head.removeEventListener('pointermove', move); head.removeEventListener('pointerup', up); head.removeEventListener('pointercancel', up);
+    if (wide) { const q = $('#fnPanel').getBoundingClientRect(); fn.pos = { x: q.left, y: q.top }; fnPref('pos', fn.pos); }
+    else { fn.sheetH = fnClamp(fn.sheetH, 170, window.innerHeight * 0.85); fnPref('sheet', fn.sheetH); }
+  };
+  head.addEventListener('pointermove', move); head.addEventListener('pointerup', up); head.addEventListener('pointercancel', up);
+});
+// resized with the corner grip (wide screen): remember the size, switch between tabs and the three-part sheet
+if (window.ResizeObserver) new ResizeObserver(() => {
+  const p = $('#fnPanel'); if (p.hidden) return;
+  p.classList.toggle('cols', p.offsetWidth >= 560 && p.offsetHeight >= 300);
+  if (!fnWide()) return;
+  const s = { w: p.offsetWidth, h: p.offsetHeight };
+  if (!fn.size || fn.size.w !== s.w || fn.size.h !== s.h) { fn.size = s; clearTimeout(fn.sizeT); fn.sizeT = setTimeout(() => fnPref('size', fn.size), 400); }
+}).observe($('#fnPanel'));
+window.addEventListener('resize', fnLayout);
+if (window.visualViewport) { window.visualViewport.addEventListener('resize', fnLayout); window.visualViewport.addEventListener('scroll', fnLayout); }
+document.addEventListener('visibilitychange', () => { if (document.hidden) fnSave(); });
+window.addEventListener('pagehide', fnSave);
+
+// select part of the lesson (or of a graded quiz) -> one tap puts it into the notes as a quote, or into the cues
+let fnSelText = '', fnSelTimer = null;
+const fnSelHost = (node) => { const el = node && (node.nodeType === 1 ? node : node.parentElement); return el && el.closest('#llBody, #llChat, #lqForm[data-mode="result"]'); };
+function fnSelCheck() {
+  const s = window.getSelection(), el = $('#fnSel');
+  const ok = fn.ctx && !($('#fnFab').hidden && $('#fnPanel').hidden) && s && !s.isCollapsed && s.rangeCount && fnSelHost(s.anchorNode) && fnSelHost(s.focusNode);
+  fnSelText = ok ? s.toString().trim() : '';
+  if (!fnSelText) { el.hidden = true; return; }
+  el.hidden = false;
+  const r = s.getRangeAt(0).getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight, p = $('#fnPanel');
+  const floor = !p.hidden && !fnWide() ? p.getBoundingClientRect().top : window.innerHeight;      // never under the sheet
+  // below the selection, or resting on the sheet when there is no room: the phone's own menu sits above the selection
+  el.style.top = fnClamp(r.bottom + 10, 8, Math.max(8, floor - h - 8)) + 'px';
+  el.style.left = fnClamp(r.left + r.width / 2 - w / 2, 8, Math.max(8, window.innerWidth - w - 8)) + 'px';
+}
+document.addEventListener('selectionchange', () => { clearTimeout(fnSelTimer); fnSelTimer = setTimeout(fnSelCheck, 250); });
+$('#fnSel').addEventListener('pointerdown', (e) => e.preventDefault());      // tapping the button must not drop the selection
+$('#fnSel').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-to]'); if (!b || !fnSelText || !fn.ctx) return;
+  const k = b.dataset.to === 'cues' && fn.ctx.cornell ? 'cues' : 'notes';
+  fnTa[k].value = Cornell.append(fnTa[k].value, k === 'cues' ? Cornell.cue(fnSelText) : Cornell.quote(fnSelText), k === 'cues' ? 1 : 2);
+  fnDirty();
+  if (!$('#fnPanel').hidden) { fnTab(k); fnTa[k].scrollTop = fnTa[k].scrollHeight; }
+  // reading goes on: the window is not opened and the keyboard is not raised
+  toast(k === 'cues' ? '🔑 已加到線索' : '📌 已記到筆記', 1600);
+  const s = window.getSelection(); if (s) s.removeAllRanges();
+  $('#fnSel').hidden = true; fnSelText = '';
+});
 if (qs.has('learn')) { const t = qs.get('learn'); history.replaceState(null, '', '/'); show('learn'); openTopic(t); }
+
+// ---------- settings page: adjustable values and feature switches ----------
+let cfgGroups = null;
+const cfgInput = (it) => {
+  const id = 'cfg-' + it.key;
+  if (it.type === 'bool') return `<label class="cfgrow sw"><span><b>${esc(it.label)}</b><small>${esc(it.hint)}</small></span><input type="checkbox" id="${id}"${it.value ? ' checked' : ''}></label>`;
+  const ctl = it.type === 'lines' ? `<textarea id="${id}" rows="3">${esc(it.value.join('\n'))}</textarea>`
+    : it.type === 'time' ? `<input type="time" id="${id}" value="${esc(it.value)}">`
+    : it.type === 'model' ? `<input type="text" id="${id}" value="${esc(it.value)}" autocapitalize="off" autocomplete="off" spellcheck="false">`
+    : `<input type="number" inputmode="numeric" id="${id}" min="${it.min}" max="${it.max}" step="1" value="${esc(it.value)}">`;
+  return `<label class="cfgrow"><span><b>${esc(it.label)}</b>${it.type === 'int' || it.type === 'seconds' ? `<em>${it.min}～${it.max}</em>` : ''}<small>${esc(it.hint)}</small></span>${ctl}</label>`;
+};
+function fillCfg(groups) {
+  cfgGroups = groups;
+  $('#cfgForm').innerHTML = groups.map((g) => `<h3>${esc(g.group)}</h3>` + g.items.map(cfgInput).join('')).join('');
+}
+async function loadCfg() { try { fillCfg((await api('/api/config')).groups); } catch (e) { $('#cfgForm').innerHTML = `<p class="hint left">讀不到設定：${esc(e.message)}</p>`; } }
+// read when the box is opened (not on every poll), so what the user is typing is never replaced
+$('#cfgBox').addEventListener('toggle', () => { if ($('#cfgBox').open) loadCfg(); });
+$('#cfgSave').onclick = async () => {
+  if (!cfgGroups) return;
+  const body = {};
+  for (const it of cfgGroups.flatMap((g) => g.items)) { const el = $('#cfg-' + it.key); if (el) body[it.key] = it.type === 'bool' ? el.checked : el.value; }
+  const b = $('#cfgSave'); b.disabled = true;
+  try { const r = await api('/api/config', jbody('PUT', body)); fillCfg(r.groups); toast(r.changed.length ? `已儲存 ${r.changed.length} 項設定，馬上生效` : '沒有變更', 3500); }
+  catch (e) { toast(e.message, 5000); }
+  b.disabled = false;
+};
+
+// ---------- mail (信箱): status on the settings page ----------
+async function loadMail() {
+  let r; try { r = await api('/api/mail'); } catch { return; }
+  let t;
+  if (!r.configured) t = '還沒有設定信箱。在 Gmail 把信貼上「筆記」標籤，就會整理成草稿；設定步驟看 docs/Gmail連接.md。';
+  else t = (r.enabled ? '' : '（已關閉）\n') + r.accounts.map((x) => `${x.name}：${x.ok ? `資料夾正常，${x.files} 個檔案，已處理 ${x.seen} 封` : '⚠️ 讀不到資料夾（Drive 桌面版有開嗎？路徑對嗎？）'}`).join('\n') +
+    `\n每 ${r.everyMinutes} 分鐘檢查一次；上次：${r.last ? fmtTime(r.last.at) + `（新增 ${r.last.created} 封${r.last.errors ? `，${r.last.errors} 封讀不懂` : ''}）` : '還沒有'}`;
+  $('#mailInfo').textContent = t;
+  $('#mailScan').disabled = !r.configured || r.busy;
+}
+$('#mailScan').onclick = async () => {
+  const b = $('#mailScan'); b.disabled = true; b.textContent = '檢查中…';
+  try { const r = await api('/api/mail/scan', { method: 'POST' }); toast(r.busy ? '正在檢查中' : r.created ? `新增 ${r.created} 封信的草稿，到「📥 草稿」確認` : '沒有新的信', 4000); }
+  catch (e) { toast(e.message, 4000); }
+  b.textContent = '現在檢查一次'; loadMail(); loadDrafts();
+};
+
+// ---------- daily English reading (英文閱讀) ----------
+let enData = null, enArt = null, enSimp = false, enTimer = null, enOpening = false;
+const enApi = (p, o) => api('/api/reading' + p, o);
+let enTr;   // online translation is set up and switched on (asked from the server once per visit)
+function enShow(v) { document.querySelectorAll('#tab-eng .eview').forEach((x) => (x.hidden = x.id !== v)); clearTimeout(enTimer); $('#enGloss').hidden = true; window.scrollTo(0, 0); }
+const enPoll = (fn, ms = 4000) => { clearTimeout(enTimer); enTimer = setTimeout(() => { if (current === 'eng') fn(); }, ms); };
+const enState = (a) => (a.status === 'processing' ? '⏳ 準備中…' : a.status === 'error' ? '⚠️ 沒有準備成功' : a.finished ? `✅ 讀完了${a.score ? '・答對 ' + a.score : ''}${a.note ? '・已有筆記' : ''}` : '📖 還沒讀');
+
+async function loadEng(keep) {
+  if (!keep) enShow('enHome');
+  let r; try { r = await enApi(''); } catch (e) { return toast('讀取失敗：' + e.message); }
+  enData = r;
+  enTr = !!(r.translator && r.translatePara);
+  if (!r.level) return openPlacement();
+  const busy = r.articles.some((a) => a.status === 'processing'), hasToday = r.articles.some((a) => a.date === r.today && a.status !== 'error');
+  $('#enInfo').textContent = `目前等級 ${r.level}。` + (!r.available ? '找文章需要 Agent 的網路搜尋，目前的 AI 設定還不能用。' : r.time ? `每天 ${r.time} 自動準備一篇並推播。` : '沒有設定每天自動準備的時間，要讀的時候按下面的按鈕。') +
+    (r.vocab.learning || r.vocab.graduated ? `\n單字：${r.vocab.learning} 個還在熟悉、${r.vocab.graduated} 個已經不用再查。` : '') +
+    (r.weakest ? `\n最常答錯的題型：${r.weakest.name}（${r.weakest.right}/${r.weakest.total}），之後每篇都會出一題。` : '');
+  $('#enPrepare').disabled = busy || !r.available;
+  $('#enPrepare').textContent = busy ? '⏳ 正在找文章（大約 2～5 分鐘）…' : hasToday ? '🔄 再找一篇新的' : '🔍 現在找一篇文章';
+  $('#enEmpty').hidden = r.articles.length > 0;
+  $('#enList').innerHTML = r.articles.map((a) => `<li data-id="${esc(a.id)}"><div class="t">${a.checkpoint ? '🎯 ' : ''}${esc(a.title || (a.status === 'error' ? '沒有準備成功' : '正在找文章…'))}</div>` +
+    `<div class="m">${esc(shortDate(a.date))}${a.topic ? ' · ' + esc(a.topic) : ''}${a.level ? ' · ' + esc(a.level) : ''}${a.stance ? ' · 🧭 ' + esc(a.stance) : ''} · ${esc(enState(a))}${a.status === 'error' && a.error ? '<br>' + esc(a.error) : ''}</div></li>`).join('');
+  // the settings box is only refilled while it is closed, so typing in it survives the polling
+  if (!$('#enSetBox').open) {
+    $('#enLevelSel').innerHTML = r.levels.map((l) => `<option value="${esc(l)}"${l === r.level ? ' selected' : ''}>${esc(l)}</option>`).join('');
+    $('#enPinned').value = r.pinned.join('\n');
+  }
+  fillEnHome(r);
+  if (busy) enPoll(() => loadEng(true));
+}
+$('#enList').addEventListener('click', (e) => { const li = e.target.closest('li[data-id]'); if (li) openArticle(li.dataset.id); });
+$('#enPrepare').onclick = async () => {
+  try { await enApi('/prepare', jbody('POST')); toast('開始找文章，好了會出現在清單裡', 3500); } catch (e) { toast(e.message, 4000); }
+  loadEng(true);
+};
+$('#enSave').onclick = async () => {
+  try { await enApi('/settings', jbody('PUT', { level: $('#enLevelSel').value, pinned: $('#enPinned').value })); toast('已儲存'); $('#enSetBox').open = false; loadEng(true); }
+  catch (e) { toast(e.message, 4000); }
+};
+$('#enRetest').onclick = () => openPlacement();
+$('#enTestBack').onclick = () => (enData && enData.level ? loadEng() : show('learn'));
+$('#enReadBack').onclick = () => loadEng();
+
+function openPlacement() {
+  enShow('enTest');
+  $('#enTestQs').innerHTML = enData.placement.map((x) => `<div class="box enq"><div>${x.i + 1}. ${esc(x.q)}</div>` +
+    x.options.map((o, j) => `<label class="enopt"><input type="radio" name="enp${x.i}" value="${j}"> ${esc(o)}</label>`).join('') + '</div>').join('');
+}
+$('#enTestSubmit').onclick = async () => {
+  const answers = enData.placement.map((x) => { const c = document.querySelector(`input[name=enp${x.i}]:checked`); return c ? +c.value : null; });
+  try {
+    const g = await enApi('/placement', jbody('POST', { answers }));
+    toast(`答對 ${g.correct}/${g.total}，你的閱讀等級是 ${g.level}`, 5000);
+    loadEng();
+  } catch (e) { toast(e.message, 4000); }
+};
+
+// every English word is its own span, so a tap can ask for its meaning
+const enWords = (t, i) => t.split(/([A-Za-z][A-Za-z'’-]*)/).map((x, j) => (j % 2 ? `<span class="w${enArt && enArt.review.includes(x.toLowerCase()) ? ' rv' : ''}" data-p="${i}">${esc(x)}</span>` : esc(x))).join('');
+// one paragraph: its words, the cached Chinese under it, and the 🌐 button (only when translation is available)
+const enPara = (p, i) => {
+  const which = enSimp && enArt && enArt.simplified ? 's' : 'o';
+  const zh = enArt && enArt.zh && enArt.zh[which] && enArt.zh[which][i];
+  const body = p.startsWith('## ') ? `<h3>${enWords(p.slice(3), i)}</h3>` : p.startsWith('- ') ? `<p class="li">• ${enWords(p.slice(2), i)}</p>` : `<p>${enWords(p, i)}</p>`;
+  const btn = enTr && enArt && enArt.status === 'ready' && !zh && !(enArt.checkpoint && !enArt.finishedAt) ? `<button type="button" class="zb" data-zp="${i}" aria-label="翻譯這一段">🌐</button>` : '';
+  return body + (zh ? `<p class="zh">${esc(zh)}</p>` : '') + (btn ? `<div class="zbr">${btn}</div>` : '');
+};
+function fillEnText() {
+  const a = enArt, busy = a.simp && a.simp.status === 'processing';
+  if (!a.simplified) enSimp = false;
+  $('#enSeg').hidden = !a.simplified;
+  document.querySelectorAll('#enSeg button').forEach((b) => b.classList.toggle('active', (b.dataset.simp === '1') === enSimp));
+  $('#enHard').hidden = !!a.simplified;
+  $('#enHard').disabled = busy;
+  $('#enHard').textContent = busy ? '⏳ 正在寫簡化版…' : a.simp && a.simp.status === 'error' ? '😵 簡化版沒有寫成功，再試一次' : '😵 太難了，給我簡化版';
+  $('#enText').innerHTML = (enSimp ? a.simplified : a.paras).map(enPara).join('') + (a.truncated && !enSimp ? '<p class="hint left">（文章比較長，這裡只有前半；想讀完可以開原網站。）</p>' : '');
+  if (a.checkpoint && !a.finishedAt) { $('#enSeg').hidden = true; $('#enHard').hidden = true; }   // a checkpoint is read without help
+  $('#enGloss').hidden = true;
+}
+const EN_QTYPE = { main: '主旨', detail: '細節', inference: '推論', vocab: '詞義', attitude: '態度' };
+function fillEnQs() {
+  const a = enArt, done = !!a.finishedAt;
+  $('#enQBox').hidden = !a.questions.length;
+  $('#enQs').innerHTML = a.questions.map((q, i) => {
+    const r = done && a.result && a.result.items[i];
+    return `<div class="enq"><div>${i + 1}. ${esc(q.q)}${EN_QTYPE[q.type] ? ` <small class="qt">${EN_QTYPE[q.type]}</small>` : ''}</div>` + q.options.map((o, j) => {
+      const mark = !r ? '' : j === q.answer ? ' ok' : j === r.picked ? ' no' : '';
+      return `<label class="enopt${mark}"><input type="radio" name="enq${i}" value="${j}"${done ? ' disabled' : ''}${r && r.picked === j ? ' checked' : ''}> ${esc(o)}${mark === ' ok' ? ' ✅' : mark === ' no' ? ' ❌' : ''}</label>`;
+    }).join('') + (r && q.explain ? `<p class="hint left">${esc(q.explain)}</p>` : '') + '</div>';
+  }).join('');
+  $('#enRefBox').hidden = !a.reflect && done && !a.thought;
+  $('#enRefQ').textContent = a.reflect ? a.reflect.q + (a.reflect.note ? `（對照你的筆記〈${a.reflect.note}〉）` : '') : '';
+  if (done) $('#enThought').value = a.thought || '';
+  $('#enThought').disabled = done;
+  $('#enFinish').hidden = done;
+  $('#enDone').hidden = !done;
+  if (done) $('#enDone').innerHTML = `<div class="lbl">✅ 讀完了${a.result && a.result.total ? `・答對 ${a.result.correct}/${a.result.total}` : ''}</div>` +
+    (a.taps.length ? `<p>這篇查了 ${a.taps.length} 個字，之後的文章再出現時會用底線標出來。</p>` : '') +
+    (a.graduated.length ? `<p>🎓 這些之前查過的字，已經連續 3 次不用再查：${esc(a.graduated.join('、'))}</p>` : '') +
+    (a.moved > 0 ? '<p>🎉 連續兩篇都讀得很順，等級往上調一級。</p>' : a.moved < 0 ? '<p>最近的文章偏難，等級先往下調一級。</p>' : '') +
+    (a.note ? `<p>筆記已經在 Obsidian：${esc(a.note.replace(/\.md$/, ''))}</p>` : a.draftOpen ? '<button type="button" id="enDraft" class="primary">📥 看筆記草稿</button>' : '<button type="button" id="enRedraft">📝 重新整理成筆記草稿</button>');
+}
+// ---- home: this week's topic, checkpoint state, the list of weekly reports, buttons
+function fillEnHome(r) {
+  const cp = r.checkpointInfo, f = r.features || {}, extra = [];
+  if (f.stances && r.focus) extra.push(`這個星期的主題：${r.focus}（支持、反對、實作經驗各讀一篇）`);
+  if (f.checkpoint && cp) extra.push(cp.force ? '下一篇會是檢查點文章。' : cp.due ? '檢查點到期了，下一篇每日文章會是檢查點。' : cp.last ? `上次檢查點：${cp.last}（每 ${cp.days} 天一次）` : '');
+  const lines = extra.filter(Boolean);
+  if (lines.length) $('#enInfo').textContent += '\n' + lines.join('\n');
+  $('#enRepBox').hidden = !r.reports.length;
+  $('#enReports').innerHTML = r.reports.map((x) => `<li data-week="${esc(x.week)}"><div class="t">📈 ${esc(x.week.slice(5).replace('-', '/'))} 起的一週</div><div class="m">讀了 ${x.n} 篇 · ${x.improved} 項指標進步` +
+    `${x.stagnant ? ' · ⚠️ 連續兩週沒有進步' : ''}${x.proposal && !x.proposal.decision ? ' · 有建議等你決定' : ''}${x.status === 'processing' ? ' · 產生中…' : x.status === 'error' ? ' · 沒有完成' : ''}</div></li>`).join('');
+  const busy = r.articles.some((a) => a.status === 'processing');
+  $('#enCpNow').disabled = busy || !r.available;
+}
+$('#enCpNow').onclick = async () => {
+  try { await enApi('/prepare', jbody('POST', { checkpoint: true })); toast('開始準備檢查點文章，好了會出現在清單裡', 3500); } catch (e) { toast(e.message, 4000); }
+  loadEng(true);
+};
+$('#enRepNow').onclick = async () => {
+  const b = $('#enRepNow'); b.disabled = true; b.textContent = '⏳ 產生中…';
+  try { const r = await enApi('/report/now', jbody('POST', {})); openReport(r.week); } catch (e) { toast(e.message, 5000); }
+  b.disabled = false; b.textContent = '📈 產生這週的報告';
+};
+$('#enReports').addEventListener('click', (e) => { const li = e.target.closest('li[data-week]'); if (li) openReport(li.dataset.week); });
+$('#enReportBack').onclick = () => loadEng();
+
+// ---- article page: banner, English-summary box, summary feedback, checkpoint result, fact check
+function fillEnExtras() {
+  const a = enArt, done = !!a.finishedAt, cp = !!a.checkpoint, b = [];
+  if (cp) b.push(done ? '🎯 這是檢查點文章。' : '🎯 <b>檢查點文章</b>：這篇不能查字、沒有簡化版、不能翻譯，5 題答完會用來校正你的等級。');
+  if (a.stance) b.push(`🧭 這個星期的主題「${esc(a.topic)}」第 ${a.stanceIndex}／3 篇，觀點：<b>${esc(a.stanceName)}</b>${a.finalStance ? '（這個星期的最後一篇）' : ''}`);
+  if (a.relate) b.push(`🔗 跟你讀過的〈${esc(a.relate.title)}〉：${esc(a.relate.line)}`);
+  $('#enBanner').innerHTML = b.map((x) => `<p class="enbn">${x}</p>`).join('');
+  // on the summary day the thought box is replaced by three English sentences
+  $('#enSumBox').hidden = !a.summaryTask;
+  if (a.summaryTask) $('#enRefBox').hidden = true;
+  $('#enSummary').disabled = done;
+  if (done && a.summaryTask) $('#enSummary').value = a.summaryEn || '';
+  const sf = a.sfb, sbox = $('#enSfb');
+  sbox.hidden = !(a.summaryTask && done && a.summaryEn);
+  if (!sbox.hidden) {
+    sbox.innerHTML = '<div class="lbl">✍️ 英文摘要的回饋</div>' + (!sf || sf.status === 'processing' ? '<p>⏳ AI 正在看你的摘要…</p>'
+      : sf.status === 'error' ? `<p>⚠️ ${esc(sf.error || '沒有成功')}</p><button type="button" id="enSfbRetry" class="small">再試一次</button>`
+      : (sf.error ? `<p><b>最影響理解的一個地方：</b>${esc(sf.error)}</p>` + (sf.fix ? `<p>改寫範例：<i>${esc(sf.fix)}</i></p>` : '') : '<p>沒有發現影響理解的錯誤。</p>') + (sf.praise ? `<p>👍 ${esc(sf.praise)}</p>` : ''));
+    if (!sf || sf.status === 'processing') enPoll(() => openArticle(a.id, true));
+  }
+  const cbox = $('#enCp');
+  cbox.hidden = !(cp && done && a.result);
+  if (!cbox.hidden) cbox.innerHTML = `<div class="lbl">🎯 檢查點結果</div><p>答對 ${a.result.correct}/${a.result.total}。` +
+    (a.cpJudged === false ? '有效的題目不夠多，這次沒有調整等級。' : a.cpTo === a.cpFrom ? `等級維持 ${esc(a.cpTo || '')}。` : `等級 ${esc(a.cpFrom || '')} → <b>${esc(a.cpTo || '')}</b>。`) + '</p>';
+  renderFc(a);
+}
+// fact check of the research notes this reading note links to (only when the setting is on and the note was uploaded)
+const FC_VERDICT = { note_wrong: '你的筆記可能有誤', article_wrong: '文章可能有誤', unclear: '查不到定論' };
+async function renderFc(a) {
+  const box = $('#enFc');
+  if (!a.fc || !a.note) { box.hidden = true; return; }
+  let f; try { f = await enApi(`/${a.id}/factcheck`); } catch { box.hidden = true; return; }
+  if (!enArt || enArt.id !== a.id) return;
+  box.hidden = false;
+  if (f.status === 'queued' || f.status === 'running') { box.innerHTML = '<div class="lbl">🔍 事實查核</div><p>⏳ Agent 正在上網查證你連到的研究筆記…</p>'; return enPoll(() => openArticle(a.id, true), 6000); }
+  if (f.status === 'error') { box.innerHTML = `<div class="lbl">🔍 事實查核</div><p>⚠️ ${esc(f.error || '沒有成功')}</p>`; return; }
+  if (!f.items.length) { box.innerHTML = '<div class="lbl">🔍 事實查核</div><p>沒有發現研究筆記和這篇文章衝突的說法。</p>'; return; }
+  const open = f.items.some((i) => i.state === 'open' && i.applicable);
+  box.innerHTML = '<div class="lbl">🔍 事實查核</div><p class="hint left">下面是你的研究筆記和這篇文章說法不同的地方，Agent 上網查證過。按「套用」才會改筆記，舊版會先備份到 .trash。</p>' +
+    f.items.map((i) => `<div class="enfc"><div><b>〈${esc(i.note)}〉</b> ${esc(FC_VERDICT[i.verdict] || '')}${i.state === 'applied' ? ' ✅ 已套用' : i.state === 'ignored' ? ' 不用改' : ''}</div>` +
+      `<blockquote>${esc(i.claim)}</blockquote><p>文章說：${esc(i.article)}</p>${i.reason ? `<p class="hint left">${esc(i.reason)}</p>` : ''}` +
+      (i.sources.length ? `<p class="hint left">來源：${i.sources.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https?:\/\//, '').slice(0, 40))}</a>`).join('、')}</p>` : '') +
+      (i.fix ? `<p>建議改成：<i>${esc(i.fix)}</i></p>` : '') +
+      (i.state === 'open' ? (i.applicable ? `<label class="enopt"><input type="checkbox" data-fc="${esc(i.id)}" checked> 套用這項修正</label>` : '<p class="hint left">這一項只能參考，沒有可以直接套用的修正。</p>') : '') + '</div>').join('') +
+    (f.items.some((i) => i.state === 'open') ? `<div class="row gap">${open ? '<button type="button" id="enFcApply" class="primary">套用勾選的修正</button>' : ''}<button type="button" id="enFcIgnore">都不用改</button></div>` : '');
+}
+document.querySelector('#tab-eng').addEventListener('click', async (e) => {
+  if (!enArt) return;
+  if (e.target.id === 'enSfbRetry') { try { await enApi(`/${enArt.id}/sfb`, jbody('POST')); } catch (err) { toast(err.message, 4000); } return openArticle(enArt.id, true); }
+  if (e.target.id === 'enFcApply' || e.target.id === 'enFcIgnore') {
+    const ids = [...document.querySelectorAll('#enFc input[data-fc]')].filter((c) => e.target.id === 'enFcIgnore' || c.checked).map((c) => c.dataset.fc);
+    const all = e.target.id === 'enFcIgnore' ? [...document.querySelectorAll('#enFc input[data-fc]')].map((c) => c.dataset.fc) : ids;
+    try {
+      const r = await enApi(`/${enArt.id}/factcheck/apply`, jbody('POST', { ids: all, action: e.target.id === 'enFcIgnore' ? 'ignore' : 'apply' }));
+      const bad = r.results.filter((x) => !x.ok);
+      toast(e.target.id === 'enFcIgnore' ? '已標成不用改' : bad.length ? bad.map((x) => x.reason).join('；') : `已套用 ${r.results.length} 項，舊版在 .trash`, 5000);
+    } catch (err) { toast(err.message, 5000); }
+    renderFc(enArt);
+  }
+});
+
+// ---- weekly report page
+const PROPOSAL_LABEL = { level_down: '把等級降一級', level_up: '把等級升一級', checkpoint: '下一篇改成檢查點，重新校正等級' };
+const TREND_ICON = { better: '🟢 進步', worse: '🔴 退步', same: '⚪ 持平', na: '—' };
+const repNum = (x, d = 1) => (x == null ? '—' : String(Math.round(x * 10 ** d) / 10 ** d));
+const repPct = (x) => (x == null ? '—' : Math.round(x * 100) + '%');
+let enRep = null;
+async function openReport(week, keep) {
+  if (!keep) { enOpening = true; show('eng'); enOpening = false; enShow('enReport'); $('#enRepBody').innerHTML = '<p class="hint">讀取中…</p>'; }
+  let r; try { r = await enApi('/report/' + encodeURIComponent(week)); } catch (e) { toast(e.message, 4000); return loadEng(); }
+  enRep = r;
+  const m = r.metrics, p = r.prev, c = r.compare;
+  const row = (name, cur, prev, t) => `<tr><td>${name}</td><td>${cur}</td><td>${prev}</td><td>${TREND_ICON[t] || '—'}</td></tr>`;
+  let h = `<h2>📈 ${esc(r.week.slice(5).replace('-', '/'))}～${esc(r.end.slice(5).replace('-', '/'))} 的英文閱讀週報</h2>`;
+  h += `<p class="hint left">這週讀了 ${m.n} 篇（${m.nOriginal} 篇讀原文）；上週 ${p ? p.n : 0} 篇。目前等級 ${esc(r.level || '')}。</p>`;
+  if (m.n < 2) h += '<p class="status">這週讀的篇數太少，指標只供參考，不下結論。</p>';
+  h += '<table class="enrep"><thead><tr><th></th><th>這週</th><th>上週</th><th>變化</th></tr></thead><tbody>' +
+    row('查字密度<small>每 100 字查幾個字</small>', repNum(m.density, 2), repNum(p && p.density, 2), c.density) +
+    row('原文完讀率<small>沒用輔助讀完</small>', repPct(m.plainRate), repPct(p && p.plainRate), c.plainRate) +
+    row('理解正確率', repPct(m.accuracy), repPct(p && p.accuracy), c.accuracy) +
+    row('文章難度<small>量測分數</small>', repNum(m.difficulty, 3), repNum(p && p.difficulty, 3), c.difficulty) + '</tbody></table>';
+  if (m.checkpoints.length) h += '<p>🎯 檢查點：' + m.checkpoints.map((x) => `答對 ${x.correct}/${x.total}${x.from && x.to ? `，等級 ${esc(x.from)} → ${esc(x.to)}` : ''}`).join('；') + '</p>';
+  if (m.learned) h += `<p>🎓 這週學會 ${m.learned} 個字（連續 3 次出現都不用再查）${m.learnedWords && m.learnedWords.length ? '：' + esc(m.learnedWords.slice(0, 20).join('、')) : ''}</p>`;
+  h += `<p class="hint left">還在熟悉的字：${r.learning} 個。${r.weakest ? `最常答錯的題型：${esc(r.weakest.name)}（${r.weakest.right}/${r.weakest.total}）。` : ''}</p>`;
+  if (r.status === 'processing') h += '<p class="status">⏳ AI 正在寫建議…</p>';
+  else if (r.advice) h += `<div class="box"><div class="lbl">🧑‍🏫 教練建議</div><p class="enadv">${esc(r.advice)}</p></div>`;
+  else if (r.error) h += `<p class="hint left">⚠️ ${esc(r.error)}</p>`;
+  if (r.stagnant) h += '<p class="status">⚠️ 連續兩週，四個指標都沒有任何一項進步。</p>';
+  if (r.proposal) {
+    const d = r.proposal.decision;
+    h += `<div class="box"><div class="lbl">💡 一個要你決定的改變</div><p>${esc(r.proposal.cause)}</p><p><b>建議：${esc(PROPOSAL_LABEL[r.proposal.choice] || r.proposal.choice)}</b></p>` +
+      (d ? `<p class="hint left">${d === 'accepted' ? '✅ 你已採用' : '你選擇不用'}</p>` : '<div class="row gap"><button type="button" id="enRepYes" class="primary">採用</button><button type="button" id="enRepNo">不用</button></div>') + '</div>';
+  }
+  h += '<button type="button" id="enRepAgain" class="small">🔄 重新產生這份週報</button>';
+  $('#enRepBody').innerHTML = h;
+  if (r.status === 'processing') enPoll(() => openReport(week, true));
+}
+$('#enRepBody').addEventListener('click', async (e) => {
+  if (!enRep) return;
+  const id = e.target.id;
+  if (id === 'enRepYes' || id === 'enRepNo') {
+    try { await enApi(`/report/${enRep.week}/decision`, jbody('POST', { accept: id === 'enRepYes' })); toast(id === 'enRepYes' ? '已採用，馬上生效' : '好，維持原樣', 3500); } catch (err) { toast(err.message, 4000); }
+    openReport(enRep.week, true);
+  }
+  if (id === 'enRepAgain') {
+    e.target.disabled = true; e.target.textContent = '⏳ 產生中…';
+    try { await enApi('/report/now', jbody('POST', { week: enRep.week })); } catch (err) { toast(err.message, 5000); }
+    openReport(enRep.week, true);
+  }
+});
+async function openArticle(id, keep) {
+  if (!keep) { enOpening = true; show('eng'); enOpening = false; enShow('enRead'); enSimp = false; $('#enBody').hidden = true; $('#enWait').hidden = true; $('#enThought').value = ''; }
+  let a; try { a = await enApi('/' + encodeURIComponent(id)); } catch (e) { toast(e.message, 4000); return loadEng(); }
+  if (enTr === undefined) { try { const r = await enApi(''); enTr = !!(r.translator && r.translatePara); } catch { enTr = false; } }
+  if (a.checkpoint) a.moved = 0;   // a checkpoint has its own result box; the up/down streak message does not apply
+  const first = !keep || !enArt || enArt.id !== a.id || enArt.status !== a.status;
+  enArt = a;
+  $('#enWait').hidden = a.status === 'ready';
+  $('#enBody').hidden = a.status !== 'ready';
+  if (a.status === 'processing') { $('#enWait').textContent = '⏳ ' + (a.stage || '準備中…'); return enPoll(() => openArticle(id, true)); }
+  if (a.status === 'error') { $('#enWait').textContent = '⚠️ ' + (a.error || '沒有準備成功') + '　回上一頁按「現在找一篇文章」再試一次。'; return; }
+  $('#enTitle').textContent = a.title;
+  $('#enMeta').innerHTML = `<a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.site || '原網站')} ↗</a> · 難度 ${esc(a.level || '?')}${a.lexLevel ? `（依用字和句長量測：${esc(a.lexLevel)}）` : ''}${a.userLevel ? ` · 你的等級 ${esc(a.userLevel)}` : ''} · 約 ${a.words} 字` +
+    (a.newWords || a.review.length ? `<br>${a.newWords ? `大約 ${a.newWords} 個你可能不認識的字` : ''}${a.newWords && a.review.length ? '，' : ''}${a.review.length ? '有底線的是你之前查過的字' : ''}` : '') +
+    (a.topic ? `<br>主題：${esc(a.topic)}${a.why ? '｜' + esc(a.why) : ''}` : '');
+  fillEnText();
+  // answers the user is choosing and the thought being typed are only redrawn when the article itself changed
+  if (first) fillEnQs();
+  fillEnExtras();
+  if (a.simp && a.simp.status === 'processing') enPoll(() => openArticle(id, true));
+}
+$('#enSeg').addEventListener('click', (e) => { const b = e.target.closest('button[data-simp]'); if (b && enArt) { enSimp = b.dataset.simp === '1'; fillEnText(); } });
+$('#enHard').onclick = async () => {
+  try { enArt = await enApi(`/${enArt.id}/simplify`, jbody('POST')); if (enArt.simplified) enSimp = true; fillEnText(); if (enArt.simp && enArt.simp.status === 'processing') enPoll(() => openArticle(enArt.id, true)); }
+  catch (e) { toast(e.message, 4000); }
+};
+$('#enText').addEventListener('click', async (e) => {
+  const w = e.target.closest('.w'); if (!w || !enArt) return;
+  document.querySelectorAll('#enText .w.on').forEach((x) => x.classList.remove('on'));
+  w.classList.add('on');
+  const word = w.textContent, g = $('#enGloss'), k = word.toLowerCase();
+  if (enArt.checkpoint && !enArt.finishedAt) { g.innerHTML = '🎯 檢查點文章：讀完之前不能查字'; g.hidden = false; return; }
+  const put = (zh) => { g.innerHTML = `<b>${esc(word)}</b>　${esc(zh)}`; g.hidden = false; };
+  // a word already in the glossary is shown at once; the tap is still reported, so the server knows which words needed help
+  if (enArt.gloss[k]) { put(enArt.gloss[k]); if (!enArt.finishedAt) enApi(`/${enArt.id}/gloss`, jbody('POST', { word, para: +w.dataset.p, simplified: enSimp })).catch(() => {}); return; }
+  put('查詢中…');
+  try { const r = await enApi(`/${enArt.id}/gloss`, jbody('POST', { word, para: +w.dataset.p, simplified: enSimp })); enArt.gloss[k] = r.zh; if (w.classList.contains('on')) put(r.zh || '字典查不到這個字'); }
+  catch (err) { if (w.classList.contains('on')) put('查不到：' + err.message); }
+});
+// 🌐 for one paragraph: asked once, then kept on the article (the server caches it too)
+$('#enText').addEventListener('click', async (e) => {
+  const b = e.target.closest('.zb'); if (!b || !enArt) return;
+  b.disabled = true; b.textContent = '…';
+  try {
+    const i = +b.dataset.zp, which = enSimp && enArt.simplified ? 's' : 'o';
+    const r = await enApi(`/${enArt.id}/para`, jbody('POST', { para: i, simplified: enSimp }));
+    enArt.zh = enArt.zh || { o: {}, s: {} }; enArt.zh[which][i] = r.zh;
+    fillEnText();
+    if (r.via === 'ai') toast('線上翻譯沒有成功，這段改用小模型翻譯，並已存下來', 4500);
+  } catch (err) { toast(err.message, 5000); b.disabled = false; b.textContent = '🌐'; }
+});
+$('#enGloss').onclick = () => { $('#enGloss').hidden = true; document.querySelectorAll('#enText .w.on').forEach((x) => x.classList.remove('on')); };
+$('#enFinish').onclick = async () => {
+  const answers = enArt.questions.map((q, i) => { const c = document.querySelector(`input[name=enq${i}]:checked`); return c ? +c.value : null; });
+  const left = answers.filter((x) => x == null).length;
+  if (left) return toast(`還有 ${left} 題沒作答`, 3000);
+  const b = $('#enFinish'); b.disabled = true;
+  try {
+    const r = await enApi(`/${enArt.id}/finish`, jbody('POST', { answers, thought: $('#enThought').value, simplified: enSimp, summaryEn: $('#enSummary').value }));
+    if (r.checkpoint) r.moved = 0;
+    enArt = r; fillEnQs(); fillEnExtras();
+    toast('筆記整理中，好了在「📥 草稿」確認後上傳' + (r.moved ? `；等級調整為 ${r.levelNow}` : ''), 5000);
+    $('#enDone').scrollIntoView({ block: 'center' });
+  } catch (e) { toast(e.message, 4000); }
+  b.disabled = false;
+};
+$('#enDone').addEventListener('click', async (e) => {
+  if (e.target.id === 'enDraft') return openDraft(enArt.draft);
+  if (e.target.id === 'enRedraft') { try { const r = await enApi(`/${enArt.id}/note`, jbody('POST')); toast('筆記整理中，好了在「📥 草稿」確認後上傳', 4000); openDraft(r.draft); } catch (err) { toast(err.message, 4000); } }
+});
+$('#enEntry').onclick = () => show('eng');
+const openRead = (id) => (/^week-\d{4}-\d{2}-\d{2}$/.test(id) ? openReport(id.slice(5)) : id === 'list' || !/^\d{8}-[a-f0-9]{10}$/.test(id) ? show('eng') : openArticle(id));
+navigator.serviceWorker && navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.openRead) openRead(e.data.openRead); });
+if (qs.has('read')) { const id = qs.get('read'); history.replaceState(null, '', '/'); openRead(id); }
