@@ -312,6 +312,8 @@
       <div id="llStatus" class="status" hidden></div>
       <div id="llSupp" class="box supp" hidden></div>
       <article id="llBody" class="md"></article>
+      <!-- 問答：寬螢幕時整塊搬進左邊的問答視窗（#qaBody），窄螢幕留在這裡 -->
+      <div id="qaHome"><div id="qaWrap">
       <div id="llChat"></div>
       <p id="llLevel" class="hint left" hidden></p>
       <div id="llAskBox" hidden>
@@ -327,6 +329,7 @@
           <button type="button" id="llMoreBtn" title="照目前的等級再出一個小問題">🎯 再來一題</button>
         </div>
       </div>
+      </div></div>
       <button type="button" class="wide fnopen" data-fnopen>✏️ 打開我的筆記</button>
       <p class="hint left">筆記是懸浮視窗，邊讀邊記；選取教學內容可以直接「📌 記到筆記」或「🔑 加到線索」。</p>
       <div class="row gap lt-actions">
@@ -484,9 +487,18 @@
 <!-- 懸浮筆記（上課：康乃爾三欄；測驗：單一欄） -->
 <button type="button" id="fnFab" class="fnfab" aria-label="打開我的筆記" title="我的筆記" hidden>✏️</button>
 <div id="fnSel" class="fnsel" hidden>
-  <button type="button" data-to="notes">📌 記到筆記</button>
   <button type="button" data-to="cues">🔑 加到線索</button>
+  <button type="button" data-to="notes">📌 記到筆記</button>
 </div>
+<!-- 問答視窗（只有寬螢幕；內容是課程頁的 #qaWrap） -->
+<button type="button" id="qaFab" class="fnfab qafab" aria-label="打開問答" title="問答" hidden>💬<span id="qaBadge" class="badge" hidden></span></button>
+<section id="qaPanel" class="fnpanel qapanel" aria-label="問答" hidden>
+  <div class="fnhead" id="qaHead">
+    <b>💬 問答</b><span class="hint left"></span>
+    <button type="button" id="qaClose" class="small" aria-label="收起問答" title="收起">▾ 收起</button>
+  </div>
+  <div id="qaBody"></div>
+</section>
 <section id="fnPanel" class="fnpanel" data-tab="notes" aria-label="我的筆記" hidden>
   <div class="fnhead" id="fnHead">
     <b>✏️ 我的筆記</b><span id="fnSaved" class="hint left"></span>

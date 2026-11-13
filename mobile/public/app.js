@@ -1148,6 +1148,7 @@ async function openLesson(n, start = true) {
     try { await lnApi(`/${enc(lnTopic)}/lesson/${n}/supplement`, { method: 'POST' }); toast('老師正在補充新的內容…'); } catch (e) { toast(e.message, 4000); }
     openLesson(n, false);
   };
+  qaSync(chat.length, entering);
   if (busy || spBusy || (l && l.asking)) lnPoll(() => !$('#lnLesson').hidden && openLesson(n, false), 4000);
 }
 // one input for both: the student picks (or lets the AI decide) whether this is a new question or an answer to the small question
@@ -1298,6 +1299,12 @@ const fnWide = () => window.innerWidth >= 700;                 // same breakpoin
 const fnClamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const fnText = () => (fn.ctx && fn.ctx.cornell ? Cornell.serialize({ cues: fnTa.cues.value, notes: fnTa.notes.value, sum: fnTa.sum.value }) : fnTa.notes.value);
 fn.pos = fnPref('pos'); fn.size = fnPref('size'); fn.sheetH = +fnPref('sheet') || 0; fn.open = fnWide() && fnPref('open') === true;
+// a floating window on a wide screen: its remembered size and position (or the defaults), kept inside the browser window
+const winBox = (size, pos, def) => {
+  const w = fnClamp((size && size.w) || def.w, 280, window.innerWidth - 16), h = fnClamp((size && size.h) || def.h, 220, window.innerHeight - 16);
+  return { w, h, x: fnClamp(pos ? pos.x : def.x(w, h), 0, Math.max(0, window.innerWidth - w)), y: fnClamp(pos ? pos.y : def.y(w, h), 0, Math.max(0, window.innerHeight - h)) };
+};
+const winPlace = (p, b) => Object.assign(p.style, { left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px', bottom: '' });
 function fnTab(k) {
   $('#fnPanel').dataset.tab = k;
   document.querySelectorAll('#fnTabs button').forEach((b) => { b.classList.toggle('active', b.dataset.sec === k); b.classList.toggle('has', !!fnTa[b.dataset.sec].value.trim()); });
@@ -1332,6 +1339,7 @@ function fnSync() {
   $('#fnPanel').hidden = !on || !fn.open; $('#fnFab').hidden = !on || fn.open;
   if (!on) $('#fnSel').hidden = true;
   fnLayout();
+  qaSync();
 }
 function fnToggle(open) { fn.open = open; fnPref('open', open); fnSync(); if (!open) fnSave(); }
 // phone: sits on top of the keyboard and leaves the text being read visible; wide screen: stays inside the window
@@ -1339,9 +1347,7 @@ function fnLayout() {
   const p = $('#fnPanel'), main = document.querySelector('main'), vv = window.visualViewport, vh = vv ? vv.height : window.innerHeight;
   if (p.hidden) { main.style.paddingBottom = ''; return; }
   if (fnWide()) {
-    const w = fnClamp((fn.size && fn.size.w) || 420, 280, window.innerWidth - 16), h = fnClamp((fn.size && fn.size.h) || 460, 220, window.innerHeight - 16);
-    const x = fnClamp(fn.pos ? fn.pos.x : window.innerWidth - w - 24, 0, Math.max(0, window.innerWidth - w)), y = fnClamp(fn.pos ? fn.pos.y : window.innerHeight - h - 24, 0, Math.max(0, window.innerHeight - h));
-    Object.assign(p.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px', bottom: '' });
+    winPlace(p, winBox(fn.size, fn.pos, { w: 420, h: 460, x: (w) => window.innerWidth - w - 24, y: (w, h) => window.innerHeight - h - 24 }));
     main.style.paddingBottom = '';
   } else {
     const kb = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
@@ -1383,6 +1389,51 @@ window.addEventListener('resize', fnLayout);
 if (window.visualViewport) { window.visualViewport.addEventListener('resize', fnLayout); window.visualViewport.addEventListener('scroll', fnLayout); }
 document.addEventListener('visibilitychange', () => { if (document.hidden) fnSave(); });
 window.addEventListener('pagehide', fnSave);
+
+// ---------- questions window (wide screens): the lesson's Q&A and ask box float on the left instead of sitting under the lesson ----------
+// The blocks themselves (#qaWrap) are moved into the window and back, so everything that renders into them by id keeps working.
+var qa = { open: fnPref('qa-open') !== false, pos: fnPref('qa-pos'), size: fnPref('qa-size'), count: 0, seen: 0 };
+const qaWide = () => window.innerWidth >= 1000;
+function qaSync(count, entering) {
+  if (!qa) return;
+  const p = $('#qaPanel'), wrap = $('#qaWrap'), main = document.querySelector('main');
+  const page = !$('#tab-learn').hidden && !$('#lnLesson').hidden, on = qaWide() && page;
+  const home = on ? $('#qaBody') : $('#qaHome');
+  if (wrap.parentElement !== home) home.append(wrap);
+  const has = on && (!$('#llAskBox').hidden || !!$('#llChat').firstChild);     // nothing to show while the lesson is still being prepared
+  if (count !== undefined) { const grew = count > qa.count; qa.count = count; if (entering || (has && qa.open)) qa.seen = count; if (grew && has && qa.open) $('#llChat').scrollTop = $('#llChat').scrollHeight; }
+  p.hidden = !has || !qa.open; $('#qaFab').hidden = !has || qa.open;
+  const unread = Math.max(0, qa.count - qa.seen); $('#qaBadge').hidden = !unread; $('#qaBadge').textContent = unread;
+  if (p.hidden) { main.style.marginLeft = ''; return; }
+  const top = Math.round(document.querySelector('header').getBoundingClientRect().bottom) + 16;
+  const b = winBox(qa.size, qa.pos, { w: 360, h: window.innerHeight - top - 16, x: () => 16, y: () => top });
+  winPlace(p, b);
+  // the lesson makes room: while the window sits on the left, the text column starts to the right of it
+  const natural = Math.max(0, (document.documentElement.clientWidth - Math.min(760, document.documentElement.clientWidth)) / 2);
+  main.style.marginLeft = b.x + b.w / 2 < window.innerWidth / 2 && b.x + b.w + 16 > natural ? b.x + b.w + 16 + 'px' : '';
+}
+function qaToggle(open) { qa.open = open; fnPref('qa-open', open); if (open) qa.seen = qa.count; qaSync(); if (open) $('#llChat').scrollTop = $('#llChat').scrollHeight; }
+$('#qaFab').onclick = () => qaToggle(true);
+$('#qaClose').onclick = () => qaToggle(false);
+$('#qaPanel').addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.target.id !== 'llAsk') qaToggle(false); });
+$('#qaHead').addEventListener('pointerdown', (e) => {
+  if (e.target.closest('button')) return;
+  const head = e.currentTarget, p = $('#qaPanel'), r = p.getBoundingClientRect(), sx = e.clientX, sy = e.clientY;
+  e.preventDefault(); try { head.setPointerCapture(e.pointerId); } catch {}
+  // while it is being dragged only the window moves; the lesson column settles when it is let go
+  const move = (ev) => { qa.pos = { x: r.left + ev.clientX - sx, y: r.top + ev.clientY - sy }; winPlace(p, winBox({ w: r.width, h: r.height }, qa.pos, {})); };
+  const up = () => {
+    head.removeEventListener('pointermove', move); head.removeEventListener('pointerup', up); head.removeEventListener('pointercancel', up);
+    const q = p.getBoundingClientRect(); qa.pos = { x: q.left, y: q.top }; fnPref('qa-pos', qa.pos); qaSync();
+  };
+  head.addEventListener('pointermove', move); head.addEventListener('pointerup', up); head.addEventListener('pointercancel', up);
+});
+if (window.ResizeObserver) new ResizeObserver(() => {
+  const p = $('#qaPanel'); if (p.hidden) return;
+  const s = { w: p.offsetWidth, h: p.offsetHeight };
+  if (!qa.size || qa.size.w !== s.w || qa.size.h !== s.h) { const first = !qa.size; qa.size = s; clearTimeout(qa.sizeT); qa.sizeT = setTimeout(() => { if (!first) fnPref('qa-size', qa.size); qaSync(); }, 300); }
+}).observe($('#qaPanel'));
+window.addEventListener('resize', () => qaSync());
 
 // select part of the lesson (or of a graded quiz) -> one tap puts it into the notes as a quote, or into the cues
 let fnSelText = '', fnSelTimer = null;

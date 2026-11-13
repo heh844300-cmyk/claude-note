@@ -224,6 +224,15 @@ label.check { display: flex; align-items: center; gap: 8px; font-size: 14px; mar
   .fnhead { cursor: move; padding-top: 8px; } .fnhead::before { display: none; }
   .fnbody { padding-bottom: 16px; }
 }
+/* questions window (wide screens only): the lesson's Q&A and ask box, on the left; the ask box stays at the bottom, the threads scroll */
+.qafab { right: auto; left: 14px; } .qafab .badge { position: absolute; top: 2px; right: 2px; font-size: 11px; line-height: 16px; padding: 0 5px; }
+#qaBody { flex: 1; min-height: 0; display: flex; padding: 0 12px 14px; }
+#qaBody #qaWrap { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+#qaBody #llChat { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; scrollbar-width: thin; scrollbar-color: var(--muted) transparent; }
+#qaBody #llChat:empty::before { content: '還沒有問答。讀到不懂的地方，直接在下面問。'; display: block; color: var(--muted); font-size: 14px; padding: 6px 0; }
+#qaBody .chat { margin: 0; } #qaBody .chat details.cqa:first-child { margin-top: 0; }
+#qaBody #llLevel { margin: 8px 0 0; } #qaBody #llMode.llmode { margin: 8px 0 4px; }
+#qaBody .revise { margin: 6px 0 0; flex-wrap: wrap; } #qaBody .revise textarea { flex-basis: 100%; } #qaBody .revise button { flex: 1; }
 .fnsel { position: fixed; z-index: 11; display: flex; gap: 6px; }
 .fnsel button { padding: 7px 12px; font-size: 14px; white-space: nowrap; background: var(--text); color: var(--bg); border-color: transparent; box-shadow: 0 3px 12px rgba(0,0,0,.3); }
 .fnopen { margin-bottom: 0; }
