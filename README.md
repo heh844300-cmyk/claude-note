@@ -1,6 +1,6 @@
 # Claude 筆記（Claude Note）
 
-![Version](https://img.shields.io/badge/version-V26-5b4bdb)
+![Version](https://img.shields.io/badge/version-V26.1-5b4bdb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/npm%20dependencies-0-brightgreen)

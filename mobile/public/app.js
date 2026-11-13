@@ -18,12 +18,19 @@ const fmtTime = (iso) => { const d = new Date(iso); return `${d.getMonth() + 1}/
 
 // ---------- tabs ----------
 let current = 'new';
+// theme.js replaces this to draw a page change as a view transition (kind: 'tab' | 'fwd' | 'back'; '' = no transition).
+// Only the visible swap goes through it, because a transition draws it one frame later: state, timers and loading stay outside, in order.
+var pageSwap = (kind, swap) => swap();
 function show(tab) {
+  const shown = document.querySelector('.tab:not([hidden])');
   current = tab;
-  document.querySelectorAll('.tab').forEach((s) => (s.hidden = s.id !== 'tab-' + tab));
-  fnSync();                                         // the floating notes only belong to a lesson or a quiz
-  const navTab = tab === 'edit' ? 'drafts' : tab === 'read' ? 'notes' : tab === 'vread' ? 'vault' : tab === 'eng' ? 'learn' : tab;
-  document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === navTab));
+  pageSwap(shown && shown.id !== 'tab-' + tab ? 'tab' : '', () => {
+    document.querySelectorAll('.tab').forEach((s) => (s.hidden = s.id !== 'tab-' + tab));
+    fnSync();                                       // the floating notes only belong to a lesson or a quiz
+    const navTab = tab === 'edit' ? 'drafts' : tab === 'read' ? 'notes' : tab === 'vread' ? 'vault' : tab === 'eng' ? 'learn' : tab;
+    document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === navTab));
+    window.scrollTo(0, 0);
+  });
   if (tab === 'drafts') loadDrafts();
   if (tab === 'notes') loadNotes();
   if (tab === 'vault' && !vaultShown) loadVault(vaultDir);
@@ -32,7 +39,6 @@ function show(tab) {
   if (tab === 'learn') loadLearn();
   if (tab === 'eng' && !enOpening) loadEng();
   if (tab === 'settings') loadMail();   // opening one article directly: no list load (its polling would fight the article's)
-  window.scrollTo(0, 0);
 }
 document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => show(b.dataset.tab)));
 document.querySelectorAll('[data-back]').forEach((b) => b.addEventListener('click', () => show(b.dataset.back)));
@@ -920,7 +926,16 @@ const isKiosk = () => document.body.classList.contains('kiosk-mode');
 const lnApi = (p, o) => api('/api/learn' + p, o);
 const jbody = (m, b) => ({ method: m, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) });
 const enc = encodeURIComponent;
-function lnShow(v) { document.querySelectorAll('#tab-learn .lview').forEach((x) => (x.hidden = x.id !== v)); clearTimeout(lnTimer); window.scrollTo(0, 0); fnSync(); }
+// how deep each learning page is: going deeper and coming back are drawn in opposite directions
+const LN_DEPTH = { lnList: 0, lnTopic: 1, lnLesson: 2, lnQuizCfg: 2, lnQuiz: 3 };
+function lnShow(v) {
+  clearTimeout(lnTimer);                            // at once: the caller sets its own poll right after this, and the swap below may run a frame later
+  const now = document.querySelector('#tab-learn .lview:not([hidden])'), visible = !$('#tab-learn').hidden && current === 'learn';
+  pageSwap(visible && now && now.id !== v ? ((LN_DEPTH[v] || 0) >= (LN_DEPTH[now.id] || 0) ? 'fwd' : 'back') : '', () => {
+    document.querySelectorAll('#tab-learn .lview').forEach((x) => (x.hidden = x.id !== v));
+    window.scrollTo(0, 0); fnSync();
+  });
+}
 const lnPoll = (fn, ms = 3000) => { clearTimeout(lnTimer); lnTimer = setTimeout(fn, ms); };
 document.querySelectorAll('[data-lback]').forEach((b) => (b.onclick = () => (b.dataset.lback === 'lnList' ? loadLearn() : openTopic(lnTopic))));
 const shortDate = (s) => (s ? s.slice(5).replace('-', '/') : '');

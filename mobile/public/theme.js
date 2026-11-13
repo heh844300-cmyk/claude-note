@@ -31,20 +31,9 @@
       try { root.dataset.vt = kind; const tr = document.startViewTransition(once); tr.finished.catch(() => {}).then(() => { if (root.dataset.vt === kind) delete root.dataset.vt; }); tr.ready.catch(() => {}); }
       catch (e) { once(); }
     };
-    const DEPTH = { lnList: 0, lnTopic: 1, lnLesson: 2, lnQuizCfg: 2, lnQuiz: 3 };
-    const show0 = window.show, lnShow0 = window.lnShow;
-    if (typeof show0 === 'function') window.show = function (tab) {
-      const now = document.querySelector('.tab:not([hidden])');
-      if (!now || now.id === 'tab-' + tab) return show0.apply(this, arguments);
-      const args = arguments; vt('tab', () => show0.apply(this, args));
-    };
-    if (typeof lnShow0 === 'function') window.lnShow = function (v) {
-      const now = document.querySelector('#tab-learn .lview:not([hidden])'), tabOn = !document.querySelector('#tab-learn').hidden;
-      if (!tabOn || !now || now.id === v) return lnShow0.apply(this, arguments);
-      const args = arguments; vt((DEPTH[v] || 0) >= (DEPTH[now.id] || 0) ? 'fwd' : 'back', () => lnShow0.apply(this, args));
-    };
+    // app.js hands over only the visible swap of a page change (state, timers and loading are already done by then)
+    window.pageSwap = (kind, swap) => (kind ? vt(kind, swap) : swap());
 
-    // settings: a list of categories first (one line of explanation for the one under the cursor), then one category at a time
     let onMotion = () => {};
     const setMotion = (on) => { off = !on; try { if (off) localStorage.setItem('deep-motion', 'off'); else localStorage.removeItem('deep-motion'); } catch (e) {} root.classList.toggle('deep-still', off); onMotion(); };
     const st = document.querySelector('#tab-settings');
