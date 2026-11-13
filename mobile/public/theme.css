@@ -1,0 +1,252 @@
+/* Deep-water theme: loaded after style.css, changes looks only (layout rules stay in style.css). */
+/* The glyphs are an italic cut, declared as normal: Latin gets the designed slant, Chinese falls back upright instead of being fake-slanted */
+@font-face { font-family: 'Deep Display'; src: url('montserrat-800i.woff2') format('woff2'); font-weight: 400 900; font-style: normal; font-display: swap; }
+
+/* Three surfaces, each with its own set of the app's colour variables:
+   water (the page itself: white text on blue), paper (cards: where long text is read), bar (black list rows). */
+:root {
+  --hot: #ff2d55; --black: #000000; --white: #ffffff; --cyan: #5ee6ff; --blue: #0b3fe0;
+  --w1: #9df4ff; --w2: #1cb2ff; --w3: #1557ea; --w4: #0a1f9c;                         /* water, surface to depth */
+  --paper: #ffffff; --ink: #050b2e; --ink-muted: #47577f; --ink-accent: #0b3fe0; --ink-line: #c5d3ee; --ink-field: #eef4ff;
+  --paper-plate: #050b2e; --paper-plate-text: #ffffff; --paper-sel: #0b3fe0; --paper-sel-text: #ffffff;
+  --cut: 16px; --skew: -12deg;
+  --disp: 'Deep Display', system-ui, -apple-system, "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  /* water surface */
+  --bg: #0c2fb4; --card: rgba(2, 8, 46, .62); --text: #ffffff; --muted: #cfeeff; --line: rgba(255, 255, 255, .38);
+  --accent: var(--cyan); --accent-text: #000000; --danger: #ff5d7c; --warn-bg: #ffe27a; --err-bg: #ffd9e0;
+  --plate: #000000; --plate-text: #ffffff; --sel: #ffffff; --sel-text: #000000;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --w1: #1aa0e6; --w2: #0d56c8; --w3: #081f86; --w4: #020838; --bg: #06145e;
+    --paper: #050a26; --ink: #eaf6ff; --ink-muted: #8db6e6; --ink-accent: #5ee6ff; --ink-line: rgba(110, 190, 255, .32); --ink-field: #0b1648;
+    --paper-plate: #000000; --paper-plate-text: #ffffff; --paper-sel: #ffffff; --paper-sel-text: #000000; }
+}
+.box, .md, .qcard, .enbn, .empty.guide, .flow li, .files li, pre, .fnpanel, .chdlg, .entext {
+  --text: var(--ink); --muted: var(--ink-muted); --accent: var(--ink-accent); --accent-text: var(--paper); --line: var(--ink-line);
+  --bg: var(--ink-field); --card: var(--paper); --danger: #d81e4a; --warn-bg: color-mix(in srgb, #ffcf3f 30%, var(--paper)); --err-bg: color-mix(in srgb, #ff4d6d 22%, var(--paper));
+  --plate: var(--paper-plate); --plate-text: var(--paper-plate-text); --sel: var(--paper-sel); --sel-text: var(--paper-sel-text);
+  color: var(--text); background: var(--paper); }
+.list li, .chapters li, .chat details.cqa > summary.cq, .status {
+  --text: #ffffff; --muted: #b9c6e6; --accent: var(--cyan); --line: rgba(255, 255, 255, .3); --plate: #ffffff; --plate-text: #000000; --danger: #ff7b93;
+  color: var(--text); background: var(--black); }
+
+/* ---------- the sea behind everything ---------- */
+html { background: linear-gradient(180deg, var(--w1) 0%, var(--w2) 16%, var(--w3) 50%, var(--w4) 100%) fixed; min-height: 100%; }
+body { background: none; }
+main { overflow-x: clip; }
+#deepBg { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -3; pointer-events: none; }
+/* the band of white that cuts the screen, and the page's name in solid letters (wide screens: they own the margins) */
+body::before { content: ''; position: fixed; inset: 0; z-index: -2; pointer-events: none; background: var(--white); clip-path: polygon(81% 0, 100% 0, 100% 100%, 93% 100%); display: none; }
+#deepWord { display: none; position: fixed; z-index: -1; left: 0; bottom: 0; font: 900 min(46vh, 25vw)/.74 var(--disp); letter-spacing: -.05em; color: var(--black);
+  transform: rotate(-78deg) translate(4%, -8%); transform-origin: left bottom; white-space: nowrap; pointer-events: none; user-select: none; -webkit-user-select: none; }
+@media (min-width: 1000px) { body::before, #deepWord { display: block; } }
+/* phones: the same idea as a strip at the top of every page */
+#deepHero { position: relative; height: 88px; margin: -16px -16px 10px; overflow: hidden; pointer-events: none; user-select: none; -webkit-user-select: none;
+  background: linear-gradient(112deg, var(--white) 0 61%, var(--hot) 61% 63.5%, var(--black) 63.5% 78%, transparent 78%);
+  clip-path: polygon(0 0, 100% 0, 100% 58%, 0 100%); }
+#deepHero b { position: absolute; left: -8px; bottom: -6px; font: 900 104px/.78 var(--disp); letter-spacing: -.06em; color: var(--black); transform: rotate(-8deg); transform-origin: left bottom; white-space: nowrap; }
+
+/* ---------- header and tabs: a black slab, the open tab is a white plate ---------- */
+header { background: var(--black); border-bottom: 0; box-shadow: 0 4px 0 var(--white), 0 7px 0 var(--hot); padding-bottom: 8px;
+  --text: #ffffff; --muted: #9fb2dd; --accent: var(--cyan); --plate: #1a1f3a; --plate-text: #ffffff; --line: rgba(255, 255, 255, .25); color: #fff; }
+h1 { font: 800 23px/1.05 var(--disp); letter-spacing: .01em; transform: rotate(-3deg); transform-origin: left center; }
+.hrow h1::after { content: 'NOTE SYSTEM'; display: block; font: 800 9px/1.2 var(--disp); letter-spacing: .32em; color: var(--cyan); margin-top: 2px; }
+nav { gap: 0; padding-top: 4px; }
+nav button { color: var(--cyan); font-size: 11px; font-weight: 700; padding: 6px 0 6px; border-bottom: 0; gap: 0; transform: rotate(-5deg); }
+nav button:nth-child(2n) { transform: rotate(-8deg); } nav button:nth-child(3n) { transform: rotate(-3deg); }
+nav button.active { color: var(--black); border-bottom-color: transparent; z-index: 1; transform: rotate(-6deg) scale(1.06); }
+nav .ic { display: none; }
+nav button::after { order: -1; font: 800 11px/1.15 var(--disp); letter-spacing: -.02em; }
+nav button[data-tab=new]::after { content: 'RECORD'; } nav button[data-tab=drafts]::after { content: 'DRAFT'; }
+nav button[data-tab=notes]::after { content: 'NOTES'; } nav button[data-tab=tasks]::after { content: 'TASK'; }
+nav button[data-tab=learn]::after { content: 'STUDY'; } nav button[data-tab=vault]::after { content: 'SEARCH'; }
+nav button::before, nav button:hover::before { background: transparent; border-color: transparent; }
+nav button.active::before, nav button.active:hover::before { background: var(--white); box-shadow: 5px 4px 0 var(--hot); }
+nav .badge { top: -9px; left: auto; right: 2px; margin-left: 0; }
+.badge { border-radius: 0; background: var(--hot); color: #fff; font: 800 11px/16px var(--disp); transform: skewX(var(--skew)); }
+
+/* ---------- buttons: an upright label on a slanted plate ---------- */
+button { position: relative; isolation: isolate; background: none; border: 0; border-radius: 0; font-weight: 800; color: var(--plate-text); transition: transform .1s; }
+button::before { content: ''; position: absolute; inset: 0; z-index: -1; transform: skewX(var(--skew)); background: var(--plate); border: 1px solid var(--line); transition: background .12s, box-shadow .12s; }
+button:hover::before { background: color-mix(in srgb, var(--plate) 78%, var(--cyan)); }
+button:active { transform: translate(2px, 2px); }
+button:focus-visible { outline: none; } button:focus-visible::before { outline: 2px solid var(--hot); outline-offset: 2px; }
+button.primary, .seg button.active, .ver, .ver.new, .wgrid button, .fnfab, .fnsel button, .zb { background: none; border: 0; }
+button.primary { color: var(--black); letter-spacing: .06em; font-size: 17px; }
+button.primary::before, button.primary:hover::before { background: var(--cyan); border-color: transparent; box-shadow: 5px 5px 0 var(--hot); }
+button.primary:active::before { box-shadow: 1px 1px 0 var(--hot); }
+/* plain-text buttons keep no plate */
+.back::before, button.danger::before, .tnote::before, .review button.link::before, .files li button::before, .mats button::before,
+.rems li button::before, .chapters .ci::before { display: none; }
+.back { font: 800 16px/1.4 var(--disp); color: var(--white); transform: rotate(-3deg); transform-origin: left center; }
+button.danger { color: var(--danger); } .tnote, .review button.link { color: var(--accent); }
+.seg { gap: 0; }
+.seg button, .seg button:first-child, .seg button:last-child { border-radius: 0; }
+.seg button.active { color: var(--sel-text); z-index: 1; transform: scale(1.06); }
+.seg button.active::before, .seg button.active:hover::before { background: var(--sel); border-color: transparent; box-shadow: 4px 4px 0 var(--hot); }
+.ver { border-radius: 0; opacity: 1; font: 800 10px/1.4 var(--disp); padding: 3px 10px; color: #fff; }
+.ver.new::before { background: var(--hot); border-color: transparent; }
+.setbtn { font-size: 12px; color: #fff; }
+
+/* ---------- paper: straight edges, one corner cut, a bar on the left ---------- */
+.box, .md, .qcard, .enbn, .empty.guide, .flow li, .files li, pre {
+  border: 0; border-left: 5px solid var(--black); border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, 0 100%); }
+@media (prefers-color-scheme: dark) { .box, .md, .qcard, .enbn, .empty.guide, .flow li, .files li, pre { border-left-color: var(--cyan); } }
+.qcard .qq.md, .chent .md, .chat .ca.md { border-left: 0; clip-path: none; }
+.entext { padding: 14px; }
+.qcard.wrong { border-left-color: var(--hot); } .qcard.right { border-left-color: #2e9e5b; }
+.box.group, .welcome { border-left-color: var(--hot); }
+.flow li { --cut: 8px; border-left-width: 3px; }
+textarea, input[type=text], input[type=search], .box select, .field select, .qtypes input, .cfgrow input[type=number], .cfgrow input[type=time] {
+  border-radius: 0; border: 1px solid var(--line); border-bottom: 3px solid var(--accent); background: var(--card); color: var(--text); }
+.box textarea, .box input[type=text], .fnpanel textarea, .qcard textarea, .qcard input[type=text] { background: var(--bg); }
+textarea::placeholder, input::placeholder { color: var(--muted); opacity: .8; }
+textarea:focus, input:focus { outline: 2px solid var(--hot); outline-offset: 0; border-color: transparent; }
+.pill, .lv, .review .rvlv, .enq .qt { border-radius: 0; font-weight: 800; }
+.lv { background: var(--hot); color: #fff; font-family: var(--disp); transform: skewX(var(--skew)); }
+.status { border-radius: 0; border-left: 6px solid #ffd43b; clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 0 100%); padding-right: 24px; }
+.status.error { border-left-color: var(--hot); color: #fff; }
+.hint, .empty, .field { color: var(--muted); }
+
+/* ---------- bars: black rows, the open one turns white with a red tip ---------- */
+.list li, .chapters li { position: relative; border: 0; border-radius: 0; margin-bottom: 6px; padding: 12px 26px 12px 14px;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 16px) 100%, 0 100%); transition: background .12s, color .12s; }
+.chapters li, .chapters li:first-child { border-top: 0; }
+.list li::after, .chapters li::after, .chat details.cqa > summary.cq::after { content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 22px; background: var(--hot); opacity: 0; }
+.list li:hover, .chapters li:hover, .chat details.cqa[open] > summary.cq {
+  --text: #000000; --muted: #3b4566; --accent: var(--blue); --plate: #000000; --plate-text: #ffffff; color: var(--text); background: var(--white); }
+.list li:hover::after, .chapters li:hover::after, .chat details.cqa[open] > summary.cq::after { opacity: 1; }
+.list li.in-group { border-left: 6px solid var(--hot); }
+.list .t, .chapters .ct { font-weight: 800; font-size: 17px; }
+.chapters .cp { color: var(--muted); }
+.chat details.cqa > summary.cq { position: relative; border-radius: 0; padding: 10px 34px 10px 12px; font-weight: 800;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 16px) 100%, 0 100%); }
+.chat details.cqa > summary.cq::before { color: var(--hot); }
+.chat .ca { border-radius: 0; border: 0; border-left: 5px solid var(--hot); }
+.chat .creply { border-left: 3px solid var(--hot); }
+
+/* ---------- headings: a white band laid across the page at an angle, big letters ---------- */
+#tab-learn h2, main h2 { position: relative; font: 800 27px/1.18 var(--disp); letter-spacing: -.01em; color: var(--black); background: var(--white);
+  padding: 12px 26px 12px 22px; margin: 10px -22px 20px; transform: rotate(-2.5deg); box-shadow: 0 6px 0 var(--hot), 0 12px 0 var(--black); }
+#tab-learn h2::before, main h2::before { display: none; }
+.box .lbl, .tgroup h3 { font: 800 18px/1.3 var(--disp); }
+.box > .lbl:first-child, .box > .row:first-child .lbl { display: inline-block; background: var(--plate); color: var(--plate-text); padding: 2px 16px 2px 10px; margin-left: -12px;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%); }
+#tab-learn .md h1, main .md h1 { font: 800 22px/1.3 var(--disp); }
+#tab-learn .md h2, main .md h2 { font: 800 18px/1.35 var(--disp); color: var(--plate-text); background: var(--plate); transform: rotate(-1.2deg); box-shadow: 4px 4px 0 var(--hot);
+  padding: 6px 22px 6px 12px; margin: 22px 0 12px -14px; display: table; clip-path: none; border: 0; }
+.md h3 { font-weight: 800; font-size: 17px; color: var(--accent); }
+.md h3::before { content: '// '; font-family: var(--disp); color: var(--hot); }
+.md th { background: var(--plate); color: var(--plate-text); font-weight: 800; }
+.md th, .md td { border-color: var(--line); }
+.md blockquote { border-left: 4px solid var(--hot); background: var(--bg); }
+.md code { border-radius: 0; background: var(--bg); }
+.md a, .md a.wl, .md .wl { color: var(--accent); font-weight: 700; }
+.md hr { border: 0; height: 4px; background: linear-gradient(100deg, var(--plate) 0 70%, var(--hot) 70% 74%, transparent 74%); }
+
+/* ---------- floating notes ---------- */
+.fnfab { border-radius: 0; box-shadow: none; width: 58px; height: 58px; }
+.fnfab::before, .fnfab:hover::before { transform: rotate(45deg) scale(.74); background: var(--black); border: 2px solid var(--white); box-shadow: 5px 5px 0 var(--hot); }
+.fnpanel { border: 0; border-top: 5px solid var(--black); border-radius: 0; box-shadow: 0 -8px 0 var(--hot), 0 -14px 34px rgba(0, 0, 0, .35); }
+.fnhead b { font: 800 19px/1.2 var(--disp); background: var(--plate); color: var(--plate-text); padding: 3px 18px 3px 10px; margin-left: -12px; transform: rotate(-2deg);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%); }
+.fnhead::before { border-radius: 0; height: 4px; width: 56px; margin-left: -28px; transform: skewX(var(--skew)); background: var(--hot); opacity: 1; }
+.fnsec > span { font-family: var(--disp); color: var(--accent); }
+.fnsel button { color: var(--black); } .fnsel button::before, .fnsel button:hover::before { background: var(--white); border-color: transparent; box-shadow: 4px 4px 0 var(--hot); }
+@media (min-width: 700px) { .fnpanel { border-radius: 0; border-left: 5px solid var(--black); box-shadow: 8px 8px 0 var(--hot), 0 14px 44px rgba(0, 0, 0, .45); } }
+
+/* ---------- toast, dialog ---------- */
+#toast { border-radius: 0; background: var(--white); color: var(--black); font-weight: 800; transform: skewX(-8deg) rotate(-1.5deg); box-shadow: 6px 6px 0 var(--hot); }
+.chdlg { border-radius: 0; border: 0; border-top: 6px solid var(--black); box-shadow: 10px 10px 0 var(--hot), 0 12px 40px rgba(0, 0, 0, .4); overflow: visible; }
+#tab-learn .chdlg h2, .chdlg h2 { font: 800 22px/1.2 var(--disp); margin: 0; transform: rotate(-2deg); box-shadow: 0 5px 0 var(--hot); }
+.chdlg::backdrop { background: rgba(2, 8, 60, .7); }
+.chnew { border-radius: 0; }
+
+/* ---------- motion ---------- */
+/* ---------- motion ----------
+   Page changes use the browser's view transitions (old and new picture of <main>, the header stays put), in two standard patterns:
+   - tabs (no relation between the pages): fade through. The old page fades out, then the new one fades in while growing from 92%.
+   - going into / back out of a page: shared axis. Both pages move 30px the same way, the old one fading out and the new one in.
+   The app's own switch turns it off (html.deep-still); the system "reduce motion" setting is not followed,
+   because Windows with animation effects off would otherwise hide all of it. */
+main { view-transition-name: deep-main; }
+header { view-transition-name: deep-header; }
+::view-transition-old(deep-main), ::view-transition-new(deep-main) { animation: none; mix-blend-mode: normal; }
+html[data-vt=tab]::view-transition-old(deep-main) { animation: vtFadeOut 90ms cubic-bezier(.3, 0, 1, 1) both; }
+html[data-vt=tab]::view-transition-new(deep-main) { animation: vtThroughIn 210ms 90ms cubic-bezier(0, 0, 0, 1) both; }
+html[data-vt=fwd]::view-transition-old(deep-main) { animation: vtFadeOut 90ms cubic-bezier(.3, 0, 1, 1) both, vtToLeft 300ms cubic-bezier(.2, 0, 0, 1) both; }
+html[data-vt=fwd]::view-transition-new(deep-main) { animation: vtFadeIn 210ms 90ms cubic-bezier(0, 0, 0, 1) both, vtFromRight 300ms cubic-bezier(.2, 0, 0, 1) both; }
+html[data-vt=back]::view-transition-old(deep-main) { animation: vtFadeOut 90ms cubic-bezier(.3, 0, 1, 1) both, vtToRight 300ms cubic-bezier(.2, 0, 0, 1) both; }
+html[data-vt=back]::view-transition-new(deep-main) { animation: vtFadeIn 210ms 90ms cubic-bezier(0, 0, 0, 1) both, vtFromLeft 300ms cubic-bezier(.2, 0, 0, 1) both; }
+/* browsers without view transitions: the new page simply fades in */
+html.deep-novt:not(.deep-still) .tab:not([hidden]), html.deep-novt:not(.deep-still) .lview:not([hidden]) { animation: vtFadeIn 200ms cubic-bezier(0, 0, 0, 1) both; }
+/* small state changes: short, one property or two */
+html:not(.deep-still) nav button.active::before, html:not(.deep-still) .seg button.active::before { animation: vtFadeIn 150ms cubic-bezier(0, 0, 0, 1) both; }
+html:not(.deep-still) .fnpanel:not([hidden]) { animation: deepUp 250ms cubic-bezier(0, 0, 0, 1); }
+html:not(.deep-still) #toast:not([hidden]) { animation: deepToast 200ms cubic-bezier(0, 0, 0, 1); }
+@keyframes vtFadeOut { to { opacity: 0; } }
+@keyframes vtFadeIn { from { opacity: 0; } }
+@keyframes vtThroughIn { from { opacity: 0; transform: scale(.92); } }
+@keyframes vtToLeft { to { transform: translateX(-30px); } }
+@keyframes vtFromRight { from { transform: translateX(30px); } }
+@keyframes vtToRight { to { transform: translateX(30px); } }
+@keyframes vtFromLeft { from { transform: translateX(-30px); } }
+@keyframes deepUp { from { opacity: 0; translate: 0 24px; } to { opacity: 1; translate: 0 0; } }
+@keyframes deepToast { from { opacity: 0; translate: 0 10px; } to { opacity: 1; translate: 0 0; } }
+/* the switch also stops the small hover / press transitions */
+html.deep-still *, html.deep-still *::before, html.deep-still *::after { transition: none !important; animation: none !important; }
+
+/* ---------- settings: a flat dark panel, a list of categories, then one category at a time ---------- */
+html.deep-cfg #deepHero { display: none; }
+#tab-settings { --pad: max(16px, calc(50vw - 364px)); --padl: min(var(--pad), 40px); position: relative; margin: -16px calc(-1 * var(--pad)) 0; padding: 18px 16px 130px var(--padl); min-height: calc(100vh - 120px); background: #0f1746; color: #fff;
+  --text: #ffffff; --muted: #9fb7e6; --accent: var(--cyan); --line: rgba(120, 190, 255, .28); --plate: #000000; --plate-text: #ffffff; --sel: #ffffff; --sel-text: #000000;
+  --card: rgba(0, 0, 0, .35); --bg: rgba(0, 0, 0, .35); --danger: #ff7b93; }
+#tab-settings[data-cfg=menu] { clip-path: polygon(0 0, 64% 0, 100% 44%, 100% 100%, 0 100%); }
+#tab-settings > h2 { position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; overflow: hidden; clip-path: inset(50%); transform: none; box-shadow: none; }
+#tab-settings[data-cfg=menu] > .box, #tab-settings[data-cfg=menu] > #welcomeAgain, #tab-settings[data-cfg=menu] > #cfgTabs,
+#tab-settings[data-cfg=detail] > .box:not(.cfg-on), #tab-settings[data-cfg=detail] > #cfgMenu, #tab-settings[data-cfg=detail] > #welcomeAgain { display: none; }
+.cfginfo { display: flex; gap: 10px; align-items: center; min-height: 2.9em; max-width: 520px; margin: 4px 30% 22px 0; color: var(--cyan); font-size: 15px; line-height: 1.4; }
+.cfginfo i { flex: none; font: 800 10px/1 var(--disp); border: 1.5px solid var(--cyan); border-radius: 999px; padding: 3px 10px; }
+/* everything sits on the left; the bar of the chosen line is only as wide as the list */
+#tab-settings > * { max-width: 728px; } #tab-settings > #cfgMenu { max-width: none; }
+.cfglist { display: flex; flex-direction: column; width: fit-content; min-width: min(64%, 380px); max-width: 100%; margin-left: calc(-1 * var(--padl)); }
+.cfglist button { text-align: left; padding: 10px 28px 10px var(--padl); font-size: 19px; font-weight: 700; letter-spacing: .05em; color: var(--cyan); }
+.cfglist button::before, .cfglist button:hover::before { transform: none; background: transparent; border: 0; transition: none; }
+.cfglist button small { display: none; font-size: 12px; font-weight: 400; letter-spacing: 0; color: #9fb7e6; }
+@media (hover: none) { .cfglist button small { display: block; } }
+.cfglist button.on, .cfglist button:focus-visible { color: #000; } .cfglist button.on small { color: #3b4566; }
+/* the chosen line: the same slanted white plate with a red shadow as the open tab (it runs off the left edge, so only the right end slants) */
+.cfglist button.on::before, .cfglist button:focus-visible::before { left: -40px; transform: skewX(var(--skew)); background: #fff; box-shadow: 5px 4px 0 var(--hot); outline: none; }
+.cfgask { position: absolute; right: 14px; bottom: 100px; margin: 0; font: italic 700 15px/1.3 system-ui, sans-serif; color: #fff; border-bottom: 2px solid #fff; padding: 0 2px 2px 14px; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); z-index: 1; }
+#cfgBand { position: absolute; left: 0; right: 0; bottom: 0; height: 88px; background: #fff; overflow: hidden; pointer-events: none; user-select: none; -webkit-user-select: none; }
+#cfgBand b { position: absolute; left: -6px; bottom: -22px; font: 900 108px/.9 var(--disp); letter-spacing: -.05em; color: #a9adb8; white-space: nowrap; }
+/* inside a category: the pill row of categories on top (as on the game's list screens), one item per line underneath */
+#cfgTabs { display: flex; gap: 2px; overflow-x: auto; background: #000; border-radius: 999px; padding: 3px; margin: 2px 0 18px; scrollbar-width: none; }
+#cfgTabs::-webkit-scrollbar { display: none; }
+#cfgTabs button { flex: none; padding: 5px 14px; font: italic 700 14px/1.4 system-ui, sans-serif; color: #fff; white-space: nowrap; }
+#cfgTabs button::before, #cfgTabs button:hover::before { transform: none; background: transparent; border: 0; border-radius: 999px; }
+#cfgTabs button.on { color: #000; } #cfgTabs button.on::before { background: #fff; }
+#tab-settings > .box { background: none; border-left: 0; clip-path: none; padding: 0; margin: 0; color: #fff;
+  --text: #ffffff; --muted: #9fb7e6; --accent: var(--cyan); --accent-text: #000000; --line: rgba(120, 190, 255, .28); --plate: #000000; --plate-text: #ffffff; --sel: #ffffff; --sel-text: #000000;
+  --card: rgba(0, 0, 0, .35); --bg: rgba(0, 0, 0, .35); --danger: #ff7b93; --warn-bg: rgba(255, 214, 90, .18); --err-bg: rgba(255, 80, 110, .2); }
+#tab-settings > details.box > summary { display: none; }
+#tab-settings > .box > .row:first-child .lbl { display: none; }
+#tab-settings > .box > .row:first-child { justify-content: flex-end; min-height: 0; }
+#tab-settings .cfgrow { position: relative; isolation: isolate; margin: 0 -16px 0 calc(-1 * var(--padl)); padding: 10px 30px 10px var(--padl); border-top: 1px solid var(--line); }
+#tab-settings .cfgrow::before { content: ""; position: absolute; inset: 0 8px 0 -40px; z-index: -1; transform: skewX(var(--skew)); }
+#tab-settings .cfgrow b { color: var(--cyan); font-weight: 700; }
+#tab-settings .cfgrow:focus-within, #tab-settings .cfgrow:hover { --text: #000000; --muted: #3b4566; --line: #9aa3bd; --bg: #eef1f8; --card: #eef1f8; color: #000; border-top-color: transparent; }
+#tab-settings .cfgrow:focus-within::before, #tab-settings .cfgrow:hover::before { background: #fff; box-shadow: 5px 4px 0 var(--hot); }
+#tab-settings .cfgrow:focus-within b, #tab-settings .cfgrow:hover b { color: #000; }
+#tab-settings .cfgrow:focus-within input, #tab-settings .cfgrow:hover input, #tab-settings .cfgrow:focus-within textarea, #tab-settings .cfgrow:hover textarea { color: #000; }
+#cfgForm h3 { display: inline-block; margin: 22px 0 8px; padding: 3px 16px; border-radius: 999px; background: #000; color: #fff; font: italic 700 14px/1.5 system-ui, sans-serif; }
+#tab-settings .urlline code { background: rgba(0, 0, 0, .4); color: #fff; border-radius: 0; }
+#tab-settings .sess li { border-top-color: var(--line); }
+/* settings own the whole width of the window: no page word or white band behind them */
+html.deep-cfg main { overflow-x: visible; } html.deep-cfg body { overflow-x: clip; }
+html.deep-cfg #deepWord, html.deep-cfg body::before { display: none; }
+/* page-by-page fixes */
+.wgrid span { color: #c3cfee; }
+#tab-learn .chdlg h2, .chdlg h2 { transform: none; margin: 0 0 6px; box-shadow: 0 5px 0 var(--hot); }
+#chBody { padding-top: 12px; }
