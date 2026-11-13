@@ -553,7 +553,14 @@ function inline(s) {
   s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   return s;
 }
+// a formula in the text: drawn by KaTeX (katex.min.js) when it is loaded, shown as it was written otherwise
+const mathHtml = (tex, display, raw) => {
+  try { if (typeof katex !== 'undefined' && katex) return katex.renderToString(tex, { displayMode: display, throwOnError: false, strict: 'ignore', trust: false }); } catch {}
+  return `<code class="texsrc">${esc(raw)}</code>`;
+};
 function renderMd(md) {
+  // formulas are taken out first (Markdown would eat their _ * \ |) and put back drawn at the end
+  const mx = typeof Mathmd !== 'undefined' ? Mathmd.extract(md) : { text: md, items: [] }; md = mx.text;
   let lines = md.replace(/\r/g, '').split('\n'), out = [], i = 0;
   if (lines[0] === '---') {
     const end = lines.indexOf('---', 1);
@@ -619,7 +626,7 @@ function renderMd(md) {
     else if (l.trim()) out.push(`<p>${inline(l)}</p>`);
   }
   flushList();
-  return out.join('\n');
+  return mx.items.length ? Mathmd.restore(out.join('\n'), mx.items, mathHtml) : out.join('\n');
 }
 
 // ---------- features of this install (recordings, Agent) ----------
@@ -1437,11 +1444,19 @@ window.addEventListener('resize', () => qaSync());
 
 // select part of the lesson (or of a graded quiz) -> one tap puts it into the notes as a quote, or into the cues
 let fnSelText = '', fnSelTimer = null;
+// the selection as text; a drawn formula goes back to how it is written ($…$), not the pieces it is drawn with
+function selText(s) {
+  const box = s.getRangeAt(0).cloneContents();
+  if (!window.Mathmd || !box.querySelector('.katex')) return s.toString().trim();
+  box.querySelectorAll('.katex-display, .katex').forEach((k) => { const a = box.contains(k) && k.querySelector('annotation'); if (a) k.replaceWith(Mathmd.source(a.textContent, k.classList.contains('katex-display'))); });
+  box.querySelectorAll('p, li, div, tr, br, h1, h2, h3, h4').forEach((b) => b.append('\n'));
+  return box.textContent.replace(/\n{3,}/g, '\n\n').trim();
+}
 const fnSelHost = (node) => { const el = node && (node.nodeType === 1 ? node : node.parentElement); return el && el.closest('#llBody, #llChat, #lqForm[data-mode="result"]'); };
 function fnSelCheck() {
   const s = window.getSelection(), el = $('#fnSel');
   const ok = fn.ctx && !($('#fnFab').hidden && $('#fnPanel').hidden) && s && !s.isCollapsed && s.rangeCount && fnSelHost(s.anchorNode) && fnSelHost(s.focusNode);
-  fnSelText = ok ? s.toString().trim() : '';
+  fnSelText = ok ? selText(s) : '';
   if (!fnSelText) { el.hidden = true; return; }
   el.hidden = false;
   const r = s.getRangeAt(0).getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight, p = $('#fnPanel');
