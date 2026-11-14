@@ -277,7 +277,7 @@ $('#groupOpenOv').onclick = () => openDraft(draft.group.overviewId);
 $('#uploadAllBtn').onclick = async () => {
   const isOv = draft.group && draft.group.role === 'overview';
   if (!isOv && !checkTimes()) return toast('請先修正到期時間');
-  if (!confirm('把這一組還沒上傳的主題草稿全部上傳到 Obsidian？總覽會在最後自動建立。')) return;
+  if (!(await ask('把這一組還沒上傳的主題草稿全部上傳到 Obsidian？總覽會在最後自動建立。', { ok: '全部上傳' }))) return;
   const btn = $('#uploadAllBtn'); btn.disabled = true;
   try {
     const r = await api('/api/drafts/' + draft.id + '/upload-all', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(isOv ? {} : edits()) });
@@ -348,7 +348,7 @@ $('#uploadBtn').onclick = async () => {
   let warn = '';
   if (draft.learn && reviewBusy()) warn = '⏳ AI 還在審查這篇筆記，結果還沒出來。\n';
   else if (draft.learn && rvOpen().length) warn = `⚠️ 審查找到的問題還有 ${rvOpen().length} 個沒處理（錯誤或不精確）。\n`;
-  if (!confirm(warn + '確定上傳到 Obsidian？上傳後草稿會移除。')) return;
+  if (!(await ask(warn + '確定上傳到 Obsidian？上傳後草稿會移除。', { ok: '上傳', danger: !!warn }))) return;
   const btn = $('#uploadBtn'); btn.disabled = true;
   try {
     const r = await api('/api/drafts/' + draft.id + '/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(edits()) });
@@ -356,7 +356,7 @@ $('#uploadBtn').onclick = async () => {
   } catch (e) { toast('上傳失敗：' + e.message, 5000); btn.disabled = false; }
 };
 $('#deleteBtn').onclick = async () => {
-  if (!confirm('確定刪除這份草稿？')) return;
+  if (!(await ask('確定刪除這份草稿？', { ok: '刪除', danger: true }))) return;
   try { await api('/api/drafts/' + draft.id, { method: 'DELETE' }); draft = null; dirty = false; toast('已刪除'); show('drafts'); }
   catch (e) { toast('刪除失敗：' + e.message); }
 };
@@ -859,7 +859,7 @@ async function saveTrack(on) {
   } catch (e) { toast('失敗：' + e.message, 4500); }
 }
 $('#trSave').onclick = () => saveTrack(true);
-$('#trOff').onclick = () => { if (confirm('停止追蹤這篇？已經建立的每日紀錄會保留，只是之後不再接續、也不再整理報告。')) saveTrack(false); };
+$('#trOff').onclick = async () => { if (await ask('停止追蹤這篇？已經建立的每日紀錄會保留，只是之後不再接續、也不再整理報告。', { ok: '停止追蹤', danger: true })) saveTrack(false); };
 $('#trNew').onclick = async () => { show('new'); await loadSeries(); $('#newSeries').value = reading; $('#newText').focus(); };
 $('#trReport').onclick = async () => {
   const b = $('#trReport'); b.disabled = true; toast('整理中，大約半分鐘…', 30000);
@@ -908,13 +908,73 @@ async function openChangelog(afterUpdate) {
     (cur ? (afterUpdate ? '' : '<p class="hint left">這個版本：</p>') + chEntry(cur) : '<p class="hint left">這個版本沒有更新紀錄。</p>') +
     (older.length ? `<details class="chold"><summary>以前的更新（${older.length}）</summary>${older.map(chEntry).join('')}</details>` : '');
   $('#chCheck').hidden = isKioskMode() || !(v.sha);
-  const d = $('#chDlg'); if (!d.open) { if (d.showModal) d.showModal(); else d.setAttribute('open', ''); }
+  openDialog($('#chDlg'));
   $('#chBody').scrollTop = 0;
   seenSet(c.version);
 }
 const isKioskMode = () => document.body.classList.contains('kiosk-mode');
-$('#chClose').onclick = () => { const d = $('#chDlg'); d.close ? d.close() : d.removeAttribute('open'); };
-$('#chDlg').addEventListener('click', (e) => { if (e.target.id === 'chDlg') $('#chClose').onclick(); });   // tap outside closes
+// ---------- dialogs: native <dialog> opened as a modal; Esc, the back gesture and a tap outside close it, and opening and closing animate ----------
+// Exit animations need `overlay` and a discrete `display` transition; where either is missing (Firefox, Safari) a data-closing attribute plays the exit first
+let displayTransitionOk;
+function canTransitionDisplay() {
+  if (displayTransitionOk !== undefined) return displayTransitionOk;
+  if (!(window.CSS && CSS.supports && CSS.supports('transition-behavior', 'allow-discrete')) || !document.body) return false;
+  const probe = document.createElement('div');
+  // the shorthand is intentional: a browser that cannot parse allow-discrete drops it, display: none applies at once and the probe says false
+  probe.style.cssText = 'transition: display 1s allow-discrete !important; display: block;';
+  document.body.appendChild(probe);
+  getComputedStyle(probe).display;
+  probe.style.display = 'none';
+  displayTransitionOk = getComputedStyle(probe).display === 'block';
+  probe.remove();
+  return displayTransitionOk;
+}
+const topLayerExit = () => !!(window.CSS && CSS.supports && CSS.supports('overlay', 'auto')) && canTransitionDisplay();
+async function closeTopLayer(dlg) {
+  if (!dlg.open) return;
+  if (!topLayerExit()) {
+    dlg.setAttribute('data-closing', '');
+    const anims = dlg.getAnimations({ subtree: true });
+    if (anims.length) await Promise.race([Promise.allSettled(anims.map((a) => a.finished)), new Promise((r) => setTimeout(r, 2000))]);
+    if (!dlg.hasAttribute('data-closing')) return;
+    dlg.removeAttribute('data-closing');
+  }
+  dlg.close();
+}
+function openDialog(dlg) { if (!dlg.open) { dlg.returnValue = ''; dlg.removeAttribute('data-closing'); dlg.showModal(); } }
+function bindDialog(dlg) {
+  dlg.addEventListener('cancel', (e) => { e.preventDefault(); closeTopLayer(dlg); });      // Esc, back gesture and light dismiss take the animated way out too
+  dlg.addEventListener('submit', (e) => {                                                   // <form method="dialog"> buttons
+    if (e.target.method !== 'dialog') return;
+    e.preventDefault();
+    if (e.submitter && e.submitter.value) dlg.returnValue = e.submitter.value;
+    closeTopLayer(dlg);
+  });
+  if (dlg.getAttribute('closedby') === 'any' && !('closedBy' in HTMLDialogElement.prototype)) {   // Safari: no light dismiss of its own
+    const outside = (e) => { const r = dlg.getBoundingClientRect(); return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom; };
+    let down = false;
+    dlg.addEventListener('pointerdown', (e) => { down = outside(e); });
+    dlg.addEventListener('pointerup', (e) => { if (down && outside(e)) closeTopLayer(dlg); down = false; });   // pressed and released outside: a text-selection drag that ends on the backdrop does not close it
+  }
+}
+document.querySelectorAll('dialog').forEach(bindDialog);
+// ask('question') -> Promise<boolean>, in place of the browser's confirm(); a destructive question starts on the safe button; several asks wait in line
+let askQueue = Promise.resolve();
+function ask(message, { ok = '確定', cancel = '取消', danger = false } = {}) {
+  const run = () => new Promise((resolve) => {
+    const d = $('#askDlg'), yes = $('#askYes'), no = $('#askNo');
+    $('#askMsg').textContent = message;
+    yes.textContent = ok; no.textContent = cancel;
+    yes.classList.toggle('warn', danger);
+    yes.toggleAttribute('autofocus', !danger); no.toggleAttribute('autofocus', danger);
+    d.addEventListener('close', () => { const v = d.returnValue; d.returnValue = ''; resolve(v === 'ok'); }, { once: true });   // dismissed without choosing leaves ''
+    openDialog(d);
+  });
+  const p = askQueue.then(run, run);
+  askQueue = p.catch(() => {});
+  return p;
+}
+$('#chClose').onclick = () => closeTopLayer($('#chDlg'));
 $('#chCheck').onclick = async () => {
   const b = $('#chCheck'); b.disabled = true; b.textContent = '檢查中…';
   try { verInfo = await api('/api/version/check', { method: 'POST' }); renderVersion(); }
@@ -1081,7 +1141,7 @@ $('#ltMatFile').addEventListener('change', async (e) => {
 });
 $('#ltMats').addEventListener('click', async (e) => {
   const b = e.target.closest('[data-delmat]'); if (!b) return;
-  if (!confirm(`刪除教材「${b.dataset.delmat}」？（會移到筆記庫的 .trash）`)) return;
+  if (!(await ask(`刪除教材「${b.dataset.delmat}」？（會移到筆記庫的 .trash）`, { ok: '刪除', danger: true }))) return;
   try { await lnApi(`/${enc(lnTopic)}/materials/${enc(b.dataset.delmat)}`, { method: 'DELETE' }); openTopic(lnTopic); } catch (err) { toast(err.message); }
 });
 $('#ltSave').onclick = async () => {
@@ -1089,7 +1149,7 @@ $('#ltSave').onclick = async () => {
   catch (e) { toast(e.message, 4000); }
 };
 $('#ltDelete').onclick = async () => {
-  if (!confirm(`刪除「${lnData.title}」整個主題？大綱、錯題本、章節筆記、教材會一起移到筆記庫的 .trash。`)) return;
+  if (!(await ask(`刪除「${lnData.title}」整個主題？大綱、錯題本、章節筆記、教材會一起移到筆記庫的 .trash。`, { ok: '刪除主題', danger: true }))) return;
   try { await lnApi('/' + enc(lnTopic), { method: 'DELETE' }); toast('已移到 .trash'); loadLearn(); } catch (e) { toast(e.message, 4000); }
 };
 const vaultOpen = (p, missing) => api('/api/vault/note?path=' + enc(p)).then(() => openVaultNote(p)).catch(() => toast(missing, 3500));
@@ -1179,7 +1239,7 @@ $('#llMoreBtn').onclick = async () => {
   try { await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/ask`, jbody('POST', { more: true })); openLesson(lnLessonN, false); } catch (e) { toast(e.message); }
 };
 $('#llRedo').onclick = async () => {
-  if (!confirm('重新準備這一章的教學內容？你的筆記和問答會保留。')) return;
+  if (!(await ask('重新準備這一章的教學內容？你的筆記和問答會保留。', { ok: '重新準備' }))) return;
   try { await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}`, { method: 'POST' }); openLesson(lnLessonN, false); } catch (e) { toast(e.message); }
 };
 $('#llQuizBtn').onclick = async () => {
@@ -1188,7 +1248,7 @@ $('#llQuizBtn').onclick = async () => {
 };
 $('#llFinish').onclick = async () => {
   await fnSave();
-  if (!confirm('完成這一章？你的筆記會連同教學重點和小測驗結果交給 AI 整理成草稿，你看過再上傳。')) return;
+  if (!(await ask('完成這一章？你的筆記會連同教學重點和小測驗結果交給 AI 整理成草稿，你看過再上傳。', { ok: '完成這一章' }))) return;
   try { const r = await lnApi(`/${enc(lnTopic)}/lesson/${lnLessonN}/finish`, jbody('POST', {})); toast('這章完成了 ✅ 筆記整理中', 3500); openDraft(r.draft); }
   catch (e) { toast(e.message, 4000); }
 };
@@ -1285,7 +1345,7 @@ $('#lqForm').addEventListener('input', () => { if ($('#lqForm').dataset.mode ===
 $('#lqSubmit').onclick = async () => {
   const a = readAnswers();
   const empty = lqData.questions.filter((q) => (q.type === 'choice' ? a[q.i] < 0 : q.type === 'fill' ? !a[q.i].some((x) => x.trim()) : !String(a[q.i]).trim())).length;
-  if (!confirm(empty ? `還有 ${empty} 題沒作答，確定交卷？` : '確定交卷？')) return;
+  if (!(await ask(empty ? `還有 ${empty} 題沒作答，確定交卷？` : '確定交卷？', { ok: '交卷' }))) return;
   $('#lqSubmit').disabled = true;
   try { await lnApi(`/${enc(lnTopic)}/quiz/${lnQuizId}/submit`, jbody('POST', { answers: a })); $('#lqForm').dataset.mode = 'submitted'; openQuiz(lnQuizId); } catch (e) { toast(e.message, 4000); }
   $('#lqSubmit').disabled = false;

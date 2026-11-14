@@ -1,6 +1,6 @@
 # Claude 筆記（Claude Note）
 
-![Version](https://img.shields.io/badge/version-V26.3-5b4bdb)
+![Version](https://img.shields.io/badge/version-V27-5b4bdb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/npm%20dependencies-0-brightgreen)
@@ -60,6 +60,10 @@ AI 可以選 **Claude 訂閱**、**ChatGPT 訂閱（Codex CLI）**，或任何 *
 | 功能 | 說明 |
 |---|---|
 | **回答待釐清問題、完成待辦** | 網路搜尋一手來源；完成的待辦自動打勾，查到的知識分成研究筆記 |
+| **引用查證** | Agent 要列出答案依據的論點和引用的原文；系統實際打開每個來源，檢查原文在不在頁面上、撐不撐得起論點，在研究結果最後寫出「引用正確率」和需要留意的論點（說得比來源多、找不到原文、打不開） |
+| **對照既有筆記** | 每條論點標明是沿用既有筆記、新增，還是推翻；查到的結果和你的筆記不一致時，會列出是哪一篇、原本怎麼寫、這次查到什麼（只提醒，不會自動改筆記） |
+| **反證與信心** | 查到答案後換個立場再查一次，把反證和限制寫進答案；事實類的答案附上「信心：高／中／低」和理由 |
+| **研究團隊（選配，預設關閉）** | 在設定頁開啟後，一次研究改由四個角色各自獨立上網查：文獻員找一手來源、調查記者替關鍵論點找兩個獨立來源、紅隊專門找反證、情報分析師評估信心；再由編輯整合，並列出「四方不一致的地方」。每次研究大約用 5 倍的 Agent 額度，這個模式不使用沙盒 |
 | **回答後重查** | 在 App 裡回答「待釐清問題」，Agent 會帶著你的回答重新整理；已釐清的移到「已釐清」章節 |
 | **灰色連結自動補** | 在 Obsidian 點一個還沒有筆記的 `[[名詞]]`，空白 1 分鐘後 AI 自動寫成完整筆記：它是什麼、**實際用途**（具體情境和例子）、跟你筆記的關係、來源 |
 | **沙盒（選配）** | 需要安裝、測試軟體的待辦，在隔離的 WSL 發行版裡執行，碰不到你的電腦 |
@@ -133,7 +137,8 @@ AI 可以選 **Claude 訂閱**、**ChatGPT 訂閱（Codex CLI）**，或任何 *
 
 | 功能 | 說明 |
 |---|---|
-| **貼標籤就整理** | 在 Gmail 把信貼上「筆記」標籤，大約十分鐘內整理成草稿（摘要、重點、待辦、待釐清的問題），你確認後才寫進筆記庫的 `Claude-Notes/信件/`。個人帳號和學校帳號都可以接，多個帳號各放一個資料夾 |
+| **全自動讀取** | Apps Script 每 10 分鐘把收件匣「主要」分類的**新信**（從設定那一刻起，舊信不讀、促銷和社群分類不讀）匯出，自動整理、直接寫進 `Claude-Notes/信件/`；分流成「可以忽略」的信不建筆記，只在 `信件分流紀錄.md` 加一行。有要回覆的新信時推播一次。要關掉就把 Apps Script 的 `AUTO_EXPORT` 改成 `false` |
+| **貼標籤就整理** | 在 Gmail 把信貼上「筆記」標籤（隨時可以手動補讀任何一封，一定會留成筆記），大約十分鐘內整理成草稿（摘要、重點、待辦、待釐清的問題），你確認後才寫進筆記庫的 `Claude-Notes/信件/`（開了 `mailAutoUpload` 就直接寫進去）。個人帳號和學校帳號都可以接，多個帳號各放一個資料夾 |
 | **自動分流** | 每封信的摘要第一行會寫「分流：要回覆／只需知道／可以忽略」，同時變成標籤（`#要回覆` 等），草稿上也看得到。你貼了標籤的信不會被丟掉，「可以忽略」只是標出來，方便你在 Obsidian 篩選 |
 | **收據彙整** | 收據、發票、付款通知（標題有收據、訂單、付款成功等字，信裡有金額）不會每封一篇，而是每封一行寫進同一篇 `信件/收據彙整.md`（日期、商家、金額、用途、連回 Gmail）；金額必須真的出現在信裡才會寫，信用卡號不寫；有新增時推播一次（只有筆數） |
 | **電子報變每日英文文章** | 你貼了標籤的英文電子報（信頭有 `List-Unsubscribe`、至少約 250 字的英文正文）不整理成信件筆記，而是放進文章池，下一次的每日英文就用它，不用上網找文章；一般週才用，檢查點和立場週照舊；公用電腦看不到這種文章 |
@@ -238,6 +243,9 @@ git clone https://github.com/heh844300-cmyk/claude-note.git ClaudeNote
 | `termSplit` | `true` | 上傳後要不要把名詞解釋拆成獨立筆記 |
 | `expandTerms` | `true` | 新拆出的名詞筆記要不要讓 Agent 上網補寫「實際用途」（每個名詞會多用一次 Agent） |
 | `agentParallel` | `3` | 名詞筆記補寫「實際用途」可以同時跑幾件（1～6）；太多容易碰到 AI 的速率限制 |
+| `agentVerify` | `true` | Agent 研究完要不要查證引用的來源、對照既有筆記（每次研究多用一次小模型，並由這台電腦打開引用的網頁） |
+| `agentVerifyMax` | `12` | 每次研究最多查證幾條論點（1～30） |
+| `agentTeam` | `false` | Agent 研究改用四個角色的研究團隊（每次研究大約 5 倍的 Agent 額度；需要安裝、測試軟體的待辦只會列出建議步驟） |
 | `translatorProvider` | `"deepl"` | 線上翻譯的服務：`deepl`（DeepL API，免費方案每月 50 萬字元）或 `microsoft`（Azure Translator） |
 | `translatorKey` | `""` | 翻譯服務的金鑰，用來點單字、整段中文翻譯。留空就不使用線上翻譯。**只放在 `config.json`，不會出現在設定頁** |
 | `translatorRegion` | `""` | 只有 Azure Translator 需要，例如 `eastasia`；DeepL 留空 |
@@ -257,6 +265,7 @@ git clone https://github.com/heh844300-cmyk/claude-note.git ClaudeNote
 | `mailAccounts` | `[]` | 信箱清單，每個帳號一筆 `{ "name": "個人", "folder": "G:\\我的雲端硬碟\\ClaudeNote-Inbox", "email": "你的帳號@gmail.com" }`（`email` 選填）。**只放在 `config.json`，不在設定頁**；步驟見 [docs/Gmail連接.md](docs/Gmail連接.md) |
 | `mailEveryMinutes` | `10` | 每幾分鐘檢查一次資料夾（5～120） |
 | `mailMaxPerRun` | `5` | 每次檢查最多整理幾封（1～20；每封用一次 AI） |
+| `mailKeepIgnored` | `false` | 全自動讀到、被分流成「可以忽略」的信也留成筆記（預設只在 `信件分流紀錄.md` 加一行；貼了標籤的信一定會留） |
 | `mailAutoUpload` | `false` | 信件整理好後直接存進筆記庫的「信件」資料夾，不用在草稿確認（預設先變成草稿） |
 | `mailNotify` | `true` | 收到新信時推播一次（只有封數，沒有主旨和寄件者） |
 | `updateCheckHours` | `6` | 每幾小時到 GitHub 檢查新版本（`0` 為關閉） |

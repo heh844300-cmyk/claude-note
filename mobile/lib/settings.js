@@ -13,6 +13,9 @@ const SCHEMA = [
   { group: '🔎 Agent', items: [
     { key: 'expandTerms', type: 'bool', label: '新名詞補寫「實際用途」', hint: '新拆出的名詞筆記，Agent 再上網查證補寫；每個名詞多用一次 Agent。' },
     { key: 'agentParallel', type: 'int', min: 1, max: 6, label: '補寫實際用途同時跑幾件', hint: '太多容易碰到 AI 的速率限制。' },
+    { key: 'agentVerify', type: 'bool', label: '研究完查證引用的來源', hint: 'Agent 列出論點和引用的原文，系統實際打開每個來源檢查，並標出和既有筆記不一致的地方；每次研究多用一次小模型。' },
+    { key: 'agentVerifyMax', type: 'int', min: 1, max: 30, label: '每次研究最多查證幾條論點', hint: '每條會開一次來源網頁。' },
+    { key: 'agentTeam', type: 'bool', label: '用四個角色的研究團隊', hint: '文獻員、調查記者、紅隊、情報分析師各自獨立上網查，再由編輯整合，並列出四方不一致的地方。每次研究大約用 5 倍的 Agent 額度；這個模式不使用沙盒。' },
     { key: 'fillAfterMs', type: 'seconds', min: 0, max: 3600, label: '灰色連結空白幾秒後自動補寫', hint: '在 Obsidian 點灰色連結產生的空白筆記；0 是關閉。' },
     { key: 'dedupEveryDays', type: 'int', min: 0, max: 90, label: '每幾天掃描重複的名詞', hint: '0 是只在按按鈕時掃描。' },
   ] },
@@ -35,6 +38,7 @@ const SCHEMA = [
     { key: 'mailEveryMinutes', type: 'int', min: 5, max: 120, label: '每幾分鐘檢查一次', hint: '檢查 Drive 同步下來的資料夾有沒有新的信。' },
     { key: 'mailMaxPerRun', type: 'int', min: 1, max: 20, label: '每次最多整理幾封', hint: '每封信用一次 AI；一次貼了很多標籤時，會分幾次慢慢整理。' },
     { key: 'mailAutoUpload', type: 'bool', label: '整理好的信直接放進筆記庫', hint: '開啟後不用在草稿確認，整理完直接存進「信件」資料夾；關閉時信件會先變成草稿。信件內容不可信，所以只會放在「信件」資料夾，不會改動其他筆記。' },
+    { key: 'mailKeepIgnored', type: 'bool', label: '自動讀到的「可以忽略」的信也留成筆記', hint: '預設關閉：全自動讀取的信如果被判斷成可以忽略（廣告、群發），只在「信件分流紀錄」加一行，不建筆記。你自己貼了「筆記」標籤的信一定會留。' },
     { key: 'mailNotify', type: 'bool', label: '收到新信時推播', hint: '一次檢查只推播一次，內容只有封數，不含主旨和寄件者。' },
   ] },
   { group: '🤖 模型', items: [

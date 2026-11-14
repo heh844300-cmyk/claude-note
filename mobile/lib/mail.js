@@ -412,5 +412,15 @@ function checkRow(line, r, date, link) {
 const RECEIPT_NOTE_HEAD = (stamp) => '---\ntitle: "收據彙整"\ncreated: ' + stamp + '\nsource: "mail"\ngenerated_by: claude-note\ntags:\n  - "claude-note"\n  - "信件"\n  - "收據"\n---\n\n# 收據彙整\n\n' +
   '> 🧾 從 Gmail 貼了「筆記」標籤的收據和付款通知，每封一行，新的接在最下面。只記商家、金額、日期和用途，附件不會進筆記庫。\n\n' + RECEIPT_HEAD + '\n|---|---|---|---|---|\n';
 
-module.exports = { TRIAGE, triageOf, classify, RECEIPT_PROMPT, parseReceipt, receiptRow, checkRow, RECEIPT_NOTE_HEAD, AMOUNT_RE, RECEIPT_CUE, limitBody, MAX_TEXT, decodeWords, decodeCharset, qpBytes, parseHeaders, parseParams, parseAddrs, parseEml, cleanBody, neutralize, htmlToText, parseIcs, icsTime,
+// ---------- full-auto: the export script names a mail from the Primary inbox "<time>-auto-<id>.eml"; one you labelled has no "-auto-" ----------
+const isAutoName = (n) => /-auto-[^\/\\]+\.eml$/i.test(String(n || ''));
+// a mail the secretary called "可以忽略" (and that you did not label) is not a note: one row in a log, so a missed mail can still be found
+const IGNORE_HEAD = '| 日期 | 寄件者 | 主旨 | 原信 |';
+function ignoreRow(m, date, link) {
+  return '| ' + [cell(date, 10), cell(m && m.from, 40), cell(m && m.subject, 60), link ? '[在 Gmail 開啟](' + link + ')' : ''].join(' | ') + ' |';
+}
+const IGNORE_NOTE_HEAD = (stamp) => '---\ntitle: "信件分流紀錄"\ncreated: ' + stamp + '\nsource: "mail"\ngenerated_by: claude-note\ntags:\n  - "claude-note"\n  - "信件"\n  - "可以忽略"\n---\n\n# 信件分流紀錄\n\n' +
+  '> 📭 自動讀取的信裡，被判斷成「可以忽略」（廣告、群發、和你無關）的信，每封一行；沒有另外建筆記。想看就點「在 Gmail 開啟」，想補成筆記就在 Gmail 貼上「筆記」標籤。\n\n' + IGNORE_HEAD + '\n|---|---|---|---|\n';
+
+module.exports = { isAutoName, ignoreRow, IGNORE_NOTE_HEAD, cell, TRIAGE, triageOf, classify, RECEIPT_PROMPT, parseReceipt, receiptRow, checkRow, RECEIPT_NOTE_HEAD, AMOUNT_RE, RECEIPT_CUE, limitBody, MAX_TEXT, decodeWords, decodeCharset, qpBytes, parseHeaders, parseParams, parseAddrs, parseEml, cleanBody, neutralize, htmlToText, parseIcs, icsTime,
   remindersFromEvents, buildMaterial, MAIL_RULES, showTime, oneLine, normId, localStamp, splitMessage };

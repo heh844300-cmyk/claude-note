@@ -21,7 +21,7 @@
     --paper: #050a26; --ink: #eaf6ff; --ink-muted: #8db6e6; --ink-accent: #5ee6ff; --ink-line: rgba(110, 190, 255, .32); --ink-field: #0b1648;
     --paper-plate: #000000; --paper-plate-text: #ffffff; --paper-sel: #ffffff; --paper-sel-text: #000000; }
 }
-.box, .md, .qcard, .enbn, .empty.guide, .flow li, .files li, pre, .fnpanel, .chdlg, .entext {
+.box, .md, .qcard, .enbn, .empty.guide, .flow li, .files li, pre, .fnpanel, .chdlg, .askdlg, .entext {
   --text: var(--ink); --muted: var(--ink-muted); --accent: var(--ink-accent); --accent-text: var(--paper); --line: var(--ink-line);
   --bg: var(--ink-field); --card: var(--paper); --danger: #d81e4a; --warn-bg: color-mix(in srgb, #ffcf3f 30%, var(--paper)); --err-bg: color-mix(in srgb, #ff4d6d 22%, var(--paper));
   --plate: var(--paper-plate); --plate-text: var(--paper-plate-text); --sel: var(--paper-sel); --sel-text: var(--paper-sel-text);
@@ -158,9 +158,9 @@ textarea:focus, input:focus { outline: 2px solid var(--hot); outline-offset: 0; 
 
 /* ---------- toast, dialog ---------- */
 #toast { border-radius: 0; background: var(--white); color: var(--black); font-weight: 800; transform: skewX(-8deg) rotate(-1.5deg); box-shadow: 6px 6px 0 var(--hot); }
-.chdlg { border-radius: 0; border: 0; border-top: 6px solid var(--black); box-shadow: 10px 10px 0 var(--hot), 0 12px 40px rgba(0, 0, 0, .4); overflow: visible; }
+.chdlg, .askdlg { border-radius: 0; border: 0; border-top: 6px solid var(--black); box-shadow: 10px 10px 0 var(--hot), 0 12px 40px rgba(0, 0, 0, .4); overflow: visible; }
 #tab-learn .chdlg h2, .chdlg h2 { font: 800 22px/1.2 var(--disp); margin: 0; transform: rotate(-2deg); box-shadow: 0 5px 0 var(--hot); }
-.chdlg::backdrop { background: rgba(2, 8, 60, .7); }
+.chdlg, .askdlg { --scrim: rgba(2, 8, 60, .7); }
 .chnew { border-radius: 0; }
 
 /* ---------- motion ---------- */
@@ -250,3 +250,7 @@ html.deep-cfg #deepWord, html.deep-cfg body::before { display: none; }
 .wgrid span { color: #c3cfee; }
 #tab-learn .chdlg h2, .chdlg h2 { transform: none; margin: 0 0 6px; box-shadow: 0 5px 0 var(--hot); }
 #chBody { padding-top: 12px; }
+
+/* the destructive answer in a confirmation window stands out from the cyan primary button */
+.askdlg .askbtns button.warn { color: #fff; }
+.askdlg .askbtns button.warn::before, .askdlg .askbtns button.warn:hover::before { background: var(--hot); box-shadow: 5px 5px 0 var(--black); }

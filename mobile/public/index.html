@@ -477,13 +477,23 @@
 </main>
 
 <button type="button" id="verBadge" class="ver" hidden></button>
-<dialog id="chDlg" class="chdlg" aria-labelledby="chTitle">
+<dialog id="chDlg" class="chdlg" closedby="any" aria-labelledby="chTitle">
   <h2 id="chTitle">更新內容</h2>
   <div id="chBody"></div>
   <div class="chbtns">
     <button type="button" id="chCheck">檢查新版本</button>
     <button type="button" id="chClose" class="primary">知道了</button>
   </div>
+</dialog>
+<!-- 確認視窗：取代瀏覽器內建的 confirm()，用 ask('問題') 開啟 -->
+<dialog id="askDlg" class="askdlg" closedby="any" aria-labelledby="askMsg">
+  <form method="dialog">
+    <p id="askMsg"></p>
+    <div class="askbtns">
+      <button type="submit" id="askNo" value="cancel">取消</button>
+      <button type="submit" id="askYes" value="ok" class="primary">確定</button>
+    </div>
+  </form>
 </dialog>
 <!-- 懸浮筆記（上課：康乃爾三欄；測驗：單一欄） -->
 <button type="button" id="fnFab" class="fnfab" aria-label="打開我的筆記" title="我的筆記" hidden>✏️</button>
