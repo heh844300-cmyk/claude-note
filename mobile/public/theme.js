@@ -38,7 +38,7 @@
     const setMotion = (on) => { off = !on; try { if (off) localStorage.setItem('deep-motion', 'off'); else localStorage.removeItem('deep-motion'); } catch (e) {} root.classList.toggle('deep-still', off); onMotion(); };
     const st = document.querySelector('#tab-settings');
     if (st) {
-      const DESC = { linksBox: '手機和公用電腦連到這台電腦用的網址', notif: '到期提醒和整理完成時的推播通知', sess: '用公開網址登入的裝置，可以在這裡登出', mailBox: 'Gmail 貼上「筆記」標籤的信，整理成草稿',
+      const DESC = { linksBox: '手機和公用電腦連到這台電腦用的網址', notif: '到期提醒和整理完成時的推播通知', sess: '用公開網址登入的裝置，可以在這裡登出', mailBox: 'Gmail 貼上「筆記」標籤的信，整理成草稿', tasteBox: '從你喜歡的筆記和你的修改，學你的寫法',
         cfgBox: '各項功能的開關和數值，改完馬上生效', welcome: '再看一次這個 App 可以做哪些事' };
       const keyOf = (b) => b.id || (b.querySelector('#sessList') ? 'sess' : b.classList.contains('notif') ? 'notif' : '');
       const clean = (x) => String(x || '').replace(/^[^\p{L}\p{N}]+/u, '').trim();

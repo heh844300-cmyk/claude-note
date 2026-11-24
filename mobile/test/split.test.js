@@ -37,14 +37,14 @@ assert(S.termsPrompt('x', 9).includes('最多 9 個') && S.validTerms(Array.from
 // overview
 assert(S.summaryOf('## 摘要\n第一句話。第二句。\n\n## 重點\nx') === '第一句話。', 'summary = first sentence of 摘要');
 const ob = S.overviewBody([{ file: '2026-11-10 報稅.md', title: '報稅', summary: 's1' }, { title: '旅遊', summary: 's2' }]);
-assert(ob.includes('- [[Claude-Notes/2026-11-10 報稅|報稅]]：s1') && ob.includes('- 旅遊（還沒上傳）：s2') && ob.includes('2 個主題'), 'overview lists exact files and pending titles');
+assert(ob.includes('- [[Claude-Notes/筆記/2026-11-10 報稅|報稅]]：s1') && ob.includes('- 旅遊（還沒上傳）：s2') && ob.includes('2 個主題'), 'overview lists exact files and pending titles');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cn-split-'));
 const f = path.join(dir, 'n.md');
 fs.writeFileSync(f, '﻿---\r\ntitle: x\r\n---\r\n\r\n# 報稅\r\n\r\n## 摘要\r\n內容\r\n');
 assert(S.insertBackLink(f, '2026-11-10 雜記.md', '雜記'), 'back-link inserted');
 const back = fs.readFileSync(f, 'utf8');
-assert(back.startsWith('﻿') && back.includes('# 報稅\r\n\r\n> 🧩 同一次輸入的總覽：[[Claude-Notes/2026-11-10 雜記|雜記]]\r\n') && !/[^\r]\n/.test(back), 'back-link under title, BOM and CRLF kept');
+assert(back.startsWith('﻿') && back.includes('# 報稅\r\n\r\n> 🧩 同一次輸入的總覽：[[Claude-Notes/筆記/2026-11-10 雜記|雜記]]\r\n') && !/[^\r]\n/.test(back), 'back-link under title, BOM and CRLF kept');
 assert(!S.insertBackLink(f, '2026-11-10 雜記.md', '雜記'), 'back-link not duplicated');
 assert(!S.insertBackLink(path.join(dir, 'gone.md'), 'x.md', 'x'), 'missing file ignored');
 

@@ -404,3 +404,12 @@ details.what summary { cursor: pointer; font-size: 13px; }
 .enfc { border-top: 1px solid var(--line); padding: 8px 0; word-break: break-word; }
 .enfc blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--muted); }
 #mailInfo { white-space: pre-line; }
+.checklist { list-style: none; padding: 0; margin: 6px 0 10px; max-height: 220px; overflow-y: auto; }
+.checklist li { padding: 4px 0; word-break: break-word; }
+.checklist label { display: flex; gap: 8px; align-items: flex-start; }
+.lbl.small { font-size: 14px; margin: 12px 0 4px; }
+#tasteRules { width: 100%; box-sizing: border-box; }
+.variant .m { color: var(--muted); font-size: 13px; margin: 2px 0 6px; }
+.variant .md { margin-top: 6px; }
+#varWrap { margin-top: 8px; }
+#mapView .box p { margin: 6px 0; }

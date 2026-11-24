@@ -7,7 +7,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 
-const RESEARCH_FOLDER = '研究';
+const RESEARCH_FOLDER = '知識庫';   // concept notes (older vaults: 研究/, moved by layout.migrate)
 
 // ---------- researcher output ----------
 // DONE: lines, then "=== MAIN ===", then any number of "=== UNIT Un ===" blocks.
@@ -75,10 +75,10 @@ function librarianPrompt(units, origRel, gray = [], candidates = null) {
 選 append 之前，一定要先 Read 那篇目標筆記；如果它已經寫到這個單元的重點（包括之前補充過的段落），就改選 link。
 判斷 new 或 append 時不要看字數，要問：「這段內容換成別篇筆記也會想引用嗎？」會 → new；不會 → append（有相關筆記時）或 inline。
 
-路徑一律用相對於筆記庫根目錄、以 / 分隔、含 .md 的寫法，例如 "Claude-Notes/研究/Tailscale.md"。
+路徑一律用相對於筆記庫根目錄、以 / 分隔、含 .md 的寫法，例如 "Claude-Notes/知識庫/Tailscale.md"。
 ${grayList}
 只輸出 JSON 陣列，不要任何其他文字或 code block，例如：
-[{"id":"U1","action":"new","name":"NAT 穿透","related":[]},{"id":"U2","action":"append","target":"Claude-Notes/研究/Tailscale.md"},{"id":"U3","action":"link","target":"筆記.md"},{"id":"U4","action":"inline"}]
+[{"id":"U1","action":"new","name":"NAT 穿透","related":[]},{"id":"U2","action":"append","target":"Claude-Notes/知識庫/Tailscale.md"},{"id":"U3","action":"link","target":"筆記.md"},{"id":"U4","action":"inline"}]
 
 ===== 知識單元 =====
 ${list}
@@ -103,7 +103,7 @@ function librarianPromptNoTools(list, origRel, gray, candidates) {
 target 和 related 只能填下面列出的筆記路徑，原樣照抄。
 ${gray.length ? `\n筆記庫裡「已經被連結、但還沒有筆記」的名詞（灰色連結）：${gray.slice(0, 200).join('、')}\n選 "new" 時，如果單元的主題就是其中某個名詞，name 必須一字不差地使用那個名詞。\n` : ''}
 只輸出 JSON 陣列，不要任何其他文字或 code block，例如：
-[{"id":"U1","action":"new","name":"NAT 穿透","related":[]},{"id":"U2","action":"append","target":"Claude-Notes/研究/Tailscale.md"},{"id":"U3","action":"link","target":"筆記.md"},{"id":"U4","action":"inline"}]
+[{"id":"U1","action":"new","name":"NAT 穿透","related":[]},{"id":"U2","action":"append","target":"Claude-Notes/知識庫/Tailscale.md"},{"id":"U3","action":"link","target":"筆記.md"},{"id":"U4","action":"inline"}]
 
 ===== 知識單元 =====
 ${list}
@@ -171,6 +171,10 @@ function resolveTarget(vault, rel, origAbs) {
   const segs = norm.split('/');
   if (segs.some((s) => s === '..' || s === '' || s.startsWith('.'))) return null;          // no traversal, no .trash/.obsidian
   if (segs.slice(0, -1).some((s) => s.toLowerCase() === 'attachments')) return null;
+  // mail and raw web clips: the librarian (Claude) can read them with its file tools, but never target or relate to them
+  if (UNTRUSTED.some((u) => norm.toLowerCase().startsWith(u + '/'))) return null;
+  // generated notes (map, weekly reviews, person pages) are rewritten by the program: anything appended there would be lost
+  if (SYSTEM.some((u) => norm.toLowerCase().startsWith(u + '/'))) return null;
   if (!/\.md$/i.test(norm) || ['airw-index.md', '待辦總覽.md'].includes(segs[segs.length - 1].toLowerCase())) return null;
   const abs = path.resolve(vault, ...segs);
   if (!abs.toLowerCase().startsWith(path.resolve(vault).toLowerCase() + path.sep)) return null;
@@ -182,7 +186,7 @@ function resolveTarget(vault, rel, origAbs) {
 
 const RESERVED = /^(con|prn|aux|nul|com\d|lpt\d)$/i;
 function safeName(name) {
-  let n = String(name || '').replace(/[\\/:*?"<>|#^[\]\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '').slice(0, 60).trim();
+  let n = String(name || '').replace(/[\\/:*?"<>|#^[\]\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().replace(/\.md$/i, '').replace(/[. ]+$/, '').slice(0, 60).trim();   // "index.md" -> index, not index.md.md
   if (!n || RESERVED.test(n)) return null;
   return n;
 }
@@ -323,7 +327,7 @@ function renderMain(main, units, results) {
     if (used.has(id)) return r.action === 'inline' ? `（見上方「${u.title}」）` : linkTo(r.rel);   // a unit used twice: only a pointer
     used.add(id);
     if (r.action === 'inline') return demoteHeadings(unitBlock(u));
-    const arrow = r.action === 'link' ? '已有筆記涵蓋' : r.action === 'append' ? '已補充到' : '詳見研究筆記';
+    const arrow = r.action === 'link' ? '已有筆記涵蓋' : r.action === 'append' ? '已補充到' : '詳見知識庫筆記';
     return `${u.summary || u.title}（${arrow} → ${linkTo(r.rel)}）`;
   };
   let out = String(main || '').replace(/^\s*(DONE|RESOLVED)\b.*$\n?/gm, '').replace(/\{\{\s*(U\d+)\s*\}\}/g, (_, id) => render(id));
@@ -347,6 +351,8 @@ const EMPTY_MAX_BYTES = 64; // "empty" = only whitespace, and tiny
 // folders (vault-relative, e.g. 'Claude-Notes/信件') whose notes come from outside: no scan of the vault looks inside them
 let UNTRUSTED = [];
 const setUntrusted = (list) => { UNTRUSTED = (list || []).map((x) => String(x).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').toLowerCase()).filter(Boolean); };
+let SYSTEM = [];                                   // folders of generated notes: still scanned and searchable, but never a librarian target
+const setSystem = (list) => { SYSTEM = (list || []).map((x) => String(x).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').toLowerCase()).filter(Boolean); };
 function walkVault(vault) {
   const out = [];
   const root = path.resolve(vault);
@@ -557,6 +563,6 @@ function appendExpansion(md, exp, { model, stamp }) {
   return at >= 0 ? s.slice(0, at).replace(/\s+$/, '\n') + block + s.slice(at) : s.replace(/\s*$/, '\n') + block;
 }
 
-module.exports = { setUntrusted, RESEARCH_FOLDER, EXPAND_HEAD, needsExpansion, expandPrompt, parseExpansion, appendExpansion, noteNameSet, nameExists, unlinkUnknown, cleanExpansionLinks, parseResearch, librarianPrompt, parsePlan, resolveTarget, safeName, applyPlan, renderMain, linkTo,
+module.exports = { setUntrusted, setSystem, RESEARCH_FOLDER, EXPAND_HEAD, needsExpansion, expandPrompt, parseExpansion, appendExpansion, noteNameSet, nameExists, unlinkUnknown, cleanExpansionLinks, parseResearch, librarianPrompt, parsePlan, resolveTarget, safeName, applyPlan, renderMain, linkTo,
   walkVault, scanVault, grayNames, emptyLinkedNotes, linkContext, fillNoteMarkdown, isEmptyFile, findCaseless, relatedResearch, relatedSection,
   candidateNotes };

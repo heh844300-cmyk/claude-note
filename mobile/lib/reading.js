@@ -333,7 +333,7 @@ const READ_RULES = (a) => `
 - EXPIRES 寫 never、REMIND 寫 none、AGENT 寫 no。
 ${DATA_NOTE}
 `;
-// research notes ([[…研究/名稱|…]] or [[名稱]]) a note body links to, in order
+// research notes ([[…知識庫/名稱|…]] or [[名稱]]) a note body links to, in order
 function linkedNames(body) {
   const out = [], seen = new Set();
   const s = String(body || '').replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, '');

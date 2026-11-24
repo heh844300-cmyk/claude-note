@@ -40,7 +40,7 @@ function summaryOf(body) {
 // overview body: uploaded topics as links (exact file names), still-pending ones as plain titles
 function overviewBody(entries) {
   const lines = entries.map((e) => e.file
-    ? `- [[Claude-Notes/${e.file.replace(/\.md$/i, '')}|${e.title}]]：${e.summary || ''}`
+    ? `- [[Claude-Notes/筆記/${e.file.replace(/\.md$/i, '')}|${e.title}]]：${e.summary || ''}`
     : `- ${e.title}（還沒上傳）：${e.summary || ''}`);
   return `## 摘要\n這次輸入包含 ${entries.length} 個主題，已分成 ${entries.length} 篇筆記：\n\n${lines.join('\n')}\n`;
 }
@@ -59,7 +59,7 @@ function writeKeep(file, md, k) {
 function insertBackLink(file, overviewFile, overviewTitle) {
   if (!fs.existsSync(file)) return false;
   const k = readKeep(file);
-  const link = `[[Claude-Notes/${overviewFile.replace(/\.md$/i, '')}|${overviewTitle}]]`;
+  const link = `[[Claude-Notes/筆記/${overviewFile.replace(/\.md$/i, '')}|${overviewTitle}]]`;
   if (k.md.includes(link)) return false;
   const line = `> 🧩 同一次輸入的總覽：${link}`;
   const m = k.md.match(/^# .*$/m);

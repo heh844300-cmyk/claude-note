@@ -6,7 +6,7 @@
 const SCHEMA = [
   { group: '✍️ 整理', items: [
     { key: 'maxTopics', type: 'int', min: 2, max: 20, label: '一次輸入最多拆成幾篇', hint: '內容有好幾個不相關的主題時，最多拆成幾篇筆記；多的併進最後一篇。' },
-    { key: 'termSplit', type: 'bool', label: '名詞解釋拆成研究筆記', hint: '上傳後，把解釋名詞的段落移到「研究」資料夾，原處留摘要和連結。' },
+    { key: 'termSplit', type: 'bool', label: '名詞解釋拆成知識庫筆記', hint: '上傳後，把解釋名詞的段落移到「知識庫」資料夾，原處留摘要和連結。' },
     { key: 'maxTerms', type: 'int', min: 1, max: 20, label: '每篇最多拆出幾個名詞', hint: '學習筆記、英文閱讀筆記也適用。' },
     { key: 'bigTextChars', type: 'int', min: 200, max: 50000, label: '超過幾個字改用大模型整理', hint: '有照片或錄音時一律用大模型。' },
   ] },
@@ -29,7 +29,7 @@ const SCHEMA = [
     { key: 'readingStances', type: 'bool', label: '每週主題讀三種立場', hint: '同一個主題的三篇文章依序是：支持、反對、實作經驗；第三篇讀完會問你站哪一邊。' },
     { key: 'readingNewsletters', type: 'bool', label: '用 Gmail 的英文電子報當每日文章', hint: '你在 Gmail 貼了「筆記」標籤的英文電子報，會成為之後的每日文章（不用上網找）；一般週才用，檢查點和立場週照舊。關閉時電子報只會整理成一般的信件筆記。' },
     { key: 'readingRelate', type: 'bool', label: '文章開頭對照你最近讀過的', hint: '準備文章時，用一句話說明這篇和你最近 3 篇閱讀筆記哪裡矛盾或互補（不多花一次 AI）。' },
-    { key: 'readingFactcheck', type: 'bool', label: '上傳筆記後事實查核', hint: '筆記連到的研究筆記，由 Agent 上網查證有沒有和文章衝突；結果等你確認才會改筆記。每篇多用一次 Agent 額度。' },
+    { key: 'readingFactcheck', type: 'bool', label: '上傳筆記後事實查核', hint: '筆記連到的知識庫筆記，由 Agent 上網查證有沒有和文章衝突；結果等你確認才會改筆記。每篇多用一次 Agent 額度。' },
     { key: 'readingSummary', type: 'bool', label: '每週一天用英文寫摘要', hint: '那天「你怎麼想」改成用英文寫三句摘要，AI 只指出最影響理解的一個錯誤，不計分、不影響等級。' },
     { key: 'readingSummaryDay', type: 'int', min: 0, max: 6, label: '英文摘要是星期幾（0＝週日 … 6＝週六）', hint: '預設 6（週六）。' },
   ] },
@@ -40,6 +40,18 @@ const SCHEMA = [
     { key: 'mailAutoUpload', type: 'bool', label: '整理好的信直接放進筆記庫', hint: '開啟後不用在草稿確認，整理完直接存進「信件」資料夾；關閉時信件會先變成草稿。信件內容不可信，所以只會放在「信件」資料夾，不會改動其他筆記。' },
     { key: 'mailKeepIgnored', type: 'bool', label: '自動讀到的「可以忽略」的信也留成筆記', hint: '預設關閉：全自動讀取的信如果被判斷成可以忽略（廣告、群發），只在「信件分流紀錄」加一行，不建筆記。你自己貼了「筆記」標籤的信一定會留。' },
     { key: 'mailNotify', type: 'bool', label: '收到新信時推播', hint: '一次檢查只推播一次，內容只有封數，不含主旨和寄件者。' },
+  ] },
+  { group: '🗺️ 地圖與每週回顧', items: [
+    { key: 'weeklyReview', type: 'bool', label: '每週自動寫一篇週回顧', hint: '寫進「筆記/回顧」並推播：這週新增了什麼、被連最多的筆記、還沒想清楚的地方。沒有新增也會推播，讓你知道排程有在跑。' },
+    { key: 'weeklyReviewDay', type: 'int', min: 1, max: 7, label: '星期幾產生（1＝週一，7＝週日）', hint: '回顧到前一天為止的那一週：週一產生就是回顧上一週，週日產生就是回顧這一週。' },
+    { key: 'weeklyReviewTime', type: 'time', label: '幾點產生', hint: '那天電腦沒開的話，這週之內開機時會補做。' },
+    { key: 'mapNote', type: 'bool', label: '在筆記庫保留一篇知識庫地圖', hint: '「筆記/回顧/知識庫地圖」每天更新一次；App 的「📒 筆記 → 🗺️ 本週」隨時都是最新的。' },
+  ] },
+  { group: '📎 網頁剪藏（Web Clipper）', items: [
+    { key: 'clipEnabled', type: 'bool', label: '整理 Web Clipper 剪下的文章', hint: '用 Obsidian Web Clipper 剪進「Claude-Notes/收集箱」的網頁，會整理成筆記，連到相關的既有筆記，原文移到「收集箱/已整理」。' },
+    { key: 'clipAutoUpload', type: 'bool', label: '整理好直接放進筆記庫', hint: '開啟後不用在草稿確認，整理完直接存進「筆記」；關閉時會先留在「📥 草稿」。' },
+    { key: 'clipEveryMinutes', type: 'int', min: 1, max: 60, label: '每幾分鐘檢查一次收集箱', hint: '剪下來的檔案要放 30 秒以上才會處理（等同步寫完）。' },
+    { key: 'clipMaxPerRun', type: 'int', min: 1, max: 10, label: '每次最多整理幾篇', hint: '和你自己的筆記排同一個佇列；一次剪很多篇時，會分幾次慢慢整理。' },
   ] },
   { group: '🤖 模型', items: [
     { key: 'smallModel', type: 'model', label: '整理短筆記、查單字', hint: '例如 haiku。留空是用這個 AI 服務的預設模型。' },

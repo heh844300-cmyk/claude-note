@@ -38,7 +38,7 @@ function show(tab) {
   if (tab === 'new') loadSeries();
   if (tab === 'learn') loadLearn();
   if (tab === 'eng' && !enOpening) loadEng();
-  if (tab === 'settings') loadMail();   // opening one article directly: no list load (its polling would fight the article's)
+  if (tab === 'settings') { loadMail(); loadTaste(); }   // opening one article directly: no list load (its polling would fight the article's)
 }
 document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => show(b.dataset.tab)));
 document.querySelectorAll('[data-back]').forEach((b) => b.addEventListener('click', () => show(b.dataset.back)));
@@ -116,7 +116,45 @@ let draft = null, dirty = false;
 async function openDraft(id) {
   try { draft = await api('/api/drafts/' + id); } catch (e) { return toast(e.message); }
   dirty = false; fillEdit(); show('edit'); schedulePoll(draft.status === 'processing' || reviewBusy());
+  loadVariants();
 }
+// 🎨 three versions: their own file and their own polling (the draft itself does not change until one is picked)
+let varTimer = null, varForce = -1;
+async function loadVariants() {
+  clearTimeout(varTimer);
+  const box = $('#varBox'), id = draft && draft.id;
+  if (!id) return;
+  const ok = draft.status === 'ready' && draft.body && !draft.learn && !draft.reading && !(draft.group && draft.group.role === 'overview');
+  $('#varWrap').hidden = !ok;
+  if (!ok) return;
+  let v; try { v = await api('/api/drafts/' + id + '/variants'); } catch { v = { status: 'none' }; }
+  if (!draft || draft.id !== id) return;
+  $('#varBtn').disabled = v.status === 'running';
+  $('#varBtn').textContent = v.status === 'running' ? '⏳ 正在寫三個版本…' : v.status === 'ready' ? '🎨 重新給我三個版本' : '🎨 給我三個版本';
+  if (v.status === 'running') { box.innerHTML = ''; varTimer = setTimeout(loadVariants, 3000); return; }
+  if (v.status === 'error') { box.innerHTML = `<p class="hint left">⚠️ ${esc(v.error || '失敗')}</p>`; return; }
+  if (v.status !== 'ready') { box.innerHTML = ''; return; }
+  varForce = -1;
+  box.innerHTML = '<p class="hint left">三種寫法，內容相同。挑一個最像你的，之後還能再改。</p>' + v.items.map((x, i) => `<div class="box variant">
+      <div class="lbl">版本 ${i + 1}：${esc(x.style)}</div><div class="m">${esc(x.title)}</div>
+      <details><summary>看全文</summary><div class="md">${renderMd(x.body)}</div></details>
+      <button type="button" data-vi="${i}">用這個版本</button></div>`).join('');
+}
+$('#varBtn').onclick = async () => {
+  try { await api('/api/drafts/' + draft.id + '/variants', { method: 'POST' }); loadVariants(); } catch (e) { toast('失敗：' + e.message); }
+};
+$('#varBox').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-vi]'); if (!b) return;
+  const i = +b.dataset.vi;
+  if (dirty && varForce !== i) { varForce = i; b.textContent = '你有還沒儲存的修改，再按一次就換掉'; return; }
+  try {
+    draft = await api('/api/drafts/' + draft.id + '/variants/pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ i, force: varForce === i }) });
+    dirty = false; fillEdit(); $('#varBox').innerHTML = ''; toast('已換成版本 ' + (i + 1)); loadVariants();
+  } catch (err) {
+    if (/改過草稿/.test(err.message) && varForce !== i) { varForce = i; b.textContent = '產生版本後你改過草稿，再按一次就換掉'; return; }
+    toast('失敗：' + err.message);
+  }
+});
 const reviewBusy = () => !!(draft && draft.review && draft.review.status === 'processing');
 async function refreshEdit() {
   if (!draft) return;
@@ -127,7 +165,7 @@ async function refreshEdit() {
     if (was === 'processing' && d.status === 'ready' && d.learn) rvWait = 4;
     if (d.review) rvWait = 0; else if (rvWait > 0) rvWait--;
     if (was === 'processing' && d.status !== 'processing') {
-      dirty = false; fillEdit();
+      dirty = false; fillEdit(); loadVariants();
       toast(d.status !== 'ready' ? '處理失敗' : d.group && d.group.role === 'overview' ? `內容有 ${d.group.size} 個主題，已拆成 ${d.group.size} 篇草稿` : d.learn ? '整理好了，AI 正在審查內容…' : '整理好了');
     }
     else {
@@ -365,16 +403,44 @@ window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault()
 // ---------- notes ----------
 let noteFolder = 'mine';
 document.querySelectorAll('#noteSeg button').forEach((b) => b.addEventListener('click', () => {
-  noteFolder = b.dataset.f; $('#refreshBox').hidden = noteFolder === 'research'; $('#dedupBox').hidden = noteFolder !== 'research'; if (noteFolder === 'research') { loadDedup(); loadExpand(); } else $('#expandBox').hidden = true;
+  noteFolder = b.dataset.f; $('#refreshBox').hidden = noteFolder !== 'mine'; $('#dedupBox').hidden = noteFolder !== 'research'; if (noteFolder === 'research') { loadDedup(); loadExpand(); } else $('#expandBox').hidden = true;
   document.querySelectorAll('#noteSeg button').forEach((x) => x.classList.toggle('active', x === b));
   loadNotes();
 }));
+// 🗺️ 本週: always computed now by the server (the vault copy is rewritten once a day)
+const MAP_KIND = { note: '記錄', share: '分享', clip: '剪藏', kb: '知識庫', learn: '學習', reading: '英文閱讀' };
+const mapLi = (rel, title, sub) => `<li data-path="${esc(rel)}"><div class="t">${esc(title)}</div>${sub ? `<div class="m">${sub}</div>` : ''}</li>`;
+async function loadMap() {
+  const v = $('#mapView');
+  if (!v.innerHTML) v.innerHTML = '<p class="empty">讀取中…</p>';
+  let m; try { m = await api('/api/map'); } catch (e) { v.innerHTML = `<p class="empty">讀取失敗：${esc(e.message)}</p>`; return; }
+  const md = (d) => d.slice(5).replace('-', '/');
+  v.innerHTML = `<div class="box"><div class="lbl">🗺️ ${esc(m.week)}（${md(m.from)}～${md(m.to)}）</div>
+      <p class="hint left">${esc(m.countText)}<br>${esc(m.inboxText)}</p>
+      <div class="row gap nokiosk"><button type="button" id="mapWeekly">📅 現在產生週回顧</button>${m.latestWeekly ? '<button type="button" id="mapLatest">看最近的週回顧</button>' : ''}</div></div>
+    <div class="box"><div class="lbl">🔗 被連最多（最近 30 天）</div><p class="hint left">新筆記最常連到的地方，大概就是你這陣子在想的事。</p>
+      <ul class="list">${m.topLinked.map((t) => mapLi(t.rel, t.name, `被 ${t.n} 篇新筆記連到`)).join('') || '<li><div class="m">還沒有新筆記連到既有的筆記</div></li>'}</ul></div>
+    <div class="box"><div class="lbl">🤔 還沒想清楚的地方（最近 30 天）</div><p class="hint left">筆記裡「矛盾或未想清楚之處」的內容，等你決定。</p>
+      <ul class="list">${m.conflicts.map((c) => mapLi(c.rel, c.name, c.items.map((x) => '・' + esc(x)).join('<br>'))).join('') || '<li><div class="m">沒有</div></li>'}</ul></div>
+    <div class="box"><div class="lbl">🆕 本週新增</div>
+      <ul class="list">${m.added.slice(0, 30).map((n) => mapLi(n.rel, n.name, esc(MAP_KIND[n.kind] || '') + (n.summary ? '・' + esc(n.summary) : ''))).join('') || '<li><div class="m">這週還沒有新增筆記</div></li>'}</ul></div>`;
+  if (m.latestWeekly) $('#mapLatest').onclick = () => openVaultNote(m.latestWeekly);
+  $('#mapWeekly').onclick = async (e) => {
+    e.target.disabled = true; e.target.textContent = '產生中…（約半分鐘）';
+    try { const r = await api('/api/weekly', { method: 'POST' }); toast('週回顧寫好了'); openVaultNote(r.note); }
+    catch (err) { toast('產生失敗：' + err.message); e.target.disabled = false; e.target.textContent = '📅 現在產生週回顧'; }
+  };
+}
+$('#mapView').addEventListener('click', (e) => { const li = e.target.closest('li[data-path]'); if (li) openVaultNote(li.dataset.path); });
 async function loadNotes() {
+  const isMap = noteFolder === 'map';
+  $('#mapView').hidden = !isMap; $('#noteList').hidden = isMap;
+  if (isMap) { $('#noteEmpty').hidden = true; return loadMap(); }
   let list = [];
   try { list = await api('/api/notes' + (noteFolder === 'research' ? '?folder=research' : '')); } catch (e) { toast('讀取失敗：' + e.message); }
   $('#noteEmpty').hidden = list.length > 0;
-  $('#noteEmpty').textContent = noteFolder === 'research' ? '還沒有研究筆記。整理筆記時拆出的名詞解釋、Agent 查到的資料會放在這裡。' : '還沒有存進筆記庫的筆記。在「📥 草稿」確認後按「上傳到 Obsidian」，就會出現在這裡。';
-  $('#noteList').innerHTML = list.map((n) => `<li data-name="${esc(n.name)}"><div class="t">${esc(n.name.replace(/^研究\//, '').replace(/\.md$/i, ''))}</div>
+  $('#noteEmpty').textContent = noteFolder === 'research' ? '知識庫還是空的。整理筆記時拆出的名詞解釋、Agent 查到的資料會放在這裡。' : '還沒有存進筆記庫的筆記。在「📥 草稿」確認後按「上傳到 Obsidian」，就會出現在這裡。';
+  $('#noteList').innerHTML = list.map((n) => `<li data-name="${esc(n.name)}"><div class="t">${esc(n.name.replace(/^知識庫\//, '').replace(/\.md$/i, ''))}</div>
     <div class="m">${fmtTime(new Date(n.mtime).toISOString())}${n.reminders ? ' · ⏰' + n.reminders : ''}${n.expires ? ' · 🗑️' + esc(n.expires.slice(5, 10).replace('-', '/')) + ' 到期' : ''}${AGENT_LABEL[n.agent] ? ' · ' + AGENT_LABEL[n.agent] : ''}</div></li>`).join('');
 }
 const AGENT_LABEL = { queued: '🔎 排隊中', running: '🔎 查資料中', done: '🔎 已完成', error: '🔎 失敗' };
@@ -401,6 +467,25 @@ $('#vList').addEventListener('click', (e) => {
   else if (li.dataset.path) openVaultNote(li.dataset.path);
 });
 $('#vCrumbs').addEventListener('click', (e) => { const a = e.target.closest('a[data-dir]'); if (a) { e.preventDefault(); $('#vSearch').value = ''; loadVault(a.dataset.dir); } });
+// 👤 查人: every note mentioning the name, and a person page on request
+$('#peopleForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const name = $('#peopleName').value.trim(), out = $('#peopleOut');
+  if (!name) return;
+  out.innerHTML = '<p class="hint left">查詢中…</p>';
+  let r; try { r = await api('/api/people?name=' + encodeURIComponent(name)); } catch (err) { out.innerHTML = `<p class="hint left">${esc(err.message)}</p>`; return; }
+  const short = [...r.name].length <= 2 && /[㐀-鿿]/.test(r.name);
+  out.innerHTML = `<p class="hint left">${r.total ? `${r.total} 篇筆記提到「${esc(r.name)}」${r.total > r.hits.length ? `，列出最新的 ${r.hits.length} 篇` : ''}` : `沒有筆記提到「${esc(r.name)}」`}${short && r.total ? '。兩個字的名字可能混進別的詞，請看一下每句話。' : ''}</p>` +
+    (r.total ? `<div class="row gap nokiosk">${r.page ? '<button type="button" id="peopleOpen">📇 看人物頁</button>' : ''}<button type="button" id="peopleMake">${r.page ? '🔄 重新整理人物頁' : '📇 整理成人物頁'}</button></div>` : '') +
+    `<ul class="list">${r.hits.map((h) => `<li data-path="${esc(h.rel)}"><div class="t">${esc(h.name)}</div><div class="m">${esc(h.created)}${h.lines.map((l) => '<br>・' + esc(l)).join('')}</div></li>`).join('')}</ul>`;
+  if (r.page) $('#peopleOpen').onclick = () => openVaultNote(r.page);
+  if (r.total) $('#peopleMake').onclick = async (ev) => {
+    const b = ev.target; b.disabled = true; b.textContent = '整理中…（約半分鐘）';
+    try { const x = await api('/api/people/page', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: r.name }) }); toast('人物頁寫好了'); openVaultNote(x.note); }
+    catch (err) { toast('失敗：' + err.message); b.disabled = false; b.textContent = '📇 整理成人物頁'; }
+  };
+};
+$('#peopleOut').addEventListener('click', (e) => { const li = e.target.closest('li[data-path]'); if (li) openVaultNote(li.dataset.path); });
 $('#vSearchForm').onsubmit = async (e) => {
   e.preventDefault();
   const q = $('#vSearch').value.trim();
@@ -412,9 +497,9 @@ $('#vSearchForm').onsubmit = async (e) => {
   $('#vEmpty').hidden = r.length > 0;
 };
 $('#vBack').onclick = () => show('vault');
-// notes in Claude-Notes open in the full reader (with the Agent box); everything else in the vault reader
+// notes in Claude-Notes (筆記/, 知識庫/, 學習/) open in the full reader (with the Agent box); everything else in the vault reader
 async function openVaultNote(p) {
-  const m = p.match(/^Claude-Notes\/((?:研究\/|學習\/[^/]+\/)?[^/]+\.md)$/);
+  const m = p.match(/^Claude-Notes\/(?:筆記\/)?((?:知識庫\/|學習\/[^/]+\/)?[^/]+\.md)$/);   // 筆記/x.md -> note id x.md
   if (m && !/^學習\/[^/]+\/(大綱|錯題本)\.md$/.test(m[1])) return openNote(m[1]);   // 大綱 / 錯題本 are system files: read-only view
   try {
     const md = await api('/api/vault/note?path=' + encodeURIComponent(p));
@@ -651,8 +736,9 @@ api('/api/features').then((f) => {
 // ---------- boot ----------
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').then(notifStatus).catch(() => {});
 const qs = new URLSearchParams(location.search);
-navigator.serviceWorker && navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.openNote) openNote(e.data.openNote); if (e.data && e.data.openLearn) { show('learn'); openTopic(e.data.openLearn); } });
+navigator.serviceWorker && navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.openNote) openNote(e.data.openNote); if (e.data && e.data.openLearn) { show('learn'); openTopic(e.data.openLearn); } if (e.data && e.data.openVault) openVaultNote(e.data.openVault); });
 if (qs.has('note')) { const n = qs.get('note'); history.replaceState(null, '', '/'); loadDrafts(); openNote(n); }
+else if (qs.has('vault')) { const p = qs.get('vault'); history.replaceState(null, '', '/'); loadDrafts(); openVaultNote(p); }   // a push about a system note (週回顧)
 else if (qs.has('shared')) { toast(qs.get('shared') === '1' ? '已收到分享內容，Claude 整理中' : '分享失敗：沒有可用的內容', 3500); history.replaceState(null, '', '/'); show('drafts'); }
 else loadDrafts();
 loadSessions();
@@ -750,8 +836,8 @@ $('#upAllBtn').onclick = async () => {
 };
 $('#refreshAllBtn').onclick = async () => {
   let r; try { r = await api('/api/refresh'); } catch (e) { return toast(e.message); }
-  if (!r.notes.length) return toast('沒有可以更新的筆記（研究筆記、總覽、你自己寫的筆記不會更新；已經有更新草稿的也會跳過）', 5000);
-  $('#refreshText').textContent = `會用最新的整理規則更新 ${r.notes.length} 篇筆記（研究/ 名詞筆記、總覽和你自己寫的筆記不包含），每篇產生一份更新草稿放在「草稿」，你看過再上傳。每篇會用掉 1 次 AI 整理（用比較強的模型，Claude 訂閱會用到較多額度），上傳後再各用 1～2 次拆名詞解釋；用免費額度的話請留意。`;
+  if (!r.notes.length) return toast('沒有可以更新的筆記（知識庫筆記、總覽、你自己寫的筆記不會更新；已經有更新草稿的也會跳過）', 5000);
+  $('#refreshText').textContent = `會用最新的整理規則更新 ${r.notes.length} 篇筆記（知識庫的名詞筆記、總覽和你自己寫的筆記不包含），每篇產生一份更新草稿放在「草稿」，你看過再上傳。每篇會用掉 1 次 AI 整理（用比較強的模型，Claude 訂閱會用到較多額度），上傳後再各用 1～2 次拆名詞解釋；用免費額度的話請留意。`;
   $('#refreshConfirm').hidden = false; $('#refreshAllBtn').hidden = true;
 };
 $('#refreshCancel').onclick = () => { $('#refreshConfirm').hidden = true; $('#refreshAllBtn').hidden = false; };
@@ -1569,6 +1655,44 @@ $('#cfgSave').onclick = async () => {
 };
 
 // ---------- mail (信箱): status on the settings page ----------
+// 🎨 品味與規則: proposed rules are shown for editing; only "加進我的整理規則" writes them (appended to prompt.local.md)
+let tasteKind = 'examples';
+async function loadTaste() {
+  if ($('#tasteBox').hidden) return;
+  try {
+    const t = await api('/api/taste');
+    $('#tasteFbInfo').textContent = `目前有 ${t.feedback} 筆修改紀錄（在草稿按「請 Claude 修改」或挑版本時記下）。` + (t.feedback < t.min ? `至少要 ${t.min} 筆才能檢討。` : '');
+    $('#tasteFromFb').disabled = t.feedback < t.min;
+  } catch {}
+  if ($('#tasteNotes').childElementCount) return;
+  let list = []; try { list = await api('/api/notes'); } catch {}
+  $('#tasteNotes').innerHTML = list.slice(0, 15).map((n) => `<li><label><input type="checkbox" value="${esc(n.name)}"> ${esc(n.name.replace(/\.md$/i, ''))}</label></li>`).join('') || '<li class="hint">還沒有筆記</li>';
+}
+$('#tasteNotes').addEventListener('change', (e) => {
+  const on = [...$('#tasteNotes').querySelectorAll('input:checked')];
+  if (on.length > 3) { e.target.checked = false; toast('最多選 3 篇'); }
+});
+async function tasteAsk(kind, btn, req) {
+  const label = btn.textContent; btn.disabled = true; btn.textContent = '分析中…（約半分鐘）';
+  try {
+    const r = await req();
+    if (!r.rules.length) { toast(kind === 'insights' ? '還看不出固定的偏好，之後再試' : 'AI 沒有歸納出規則，換幾篇試試'); return; }
+    tasteKind = kind; $('#tasteRules').value = r.rules.join('\n'); $('#tasteOut').hidden = false;
+  } catch (e) { toast('失敗：' + e.message); }
+  finally { btn.disabled = false; btn.textContent = label; }
+}
+$('#tasteFromNotes').onclick = (e) => {
+  const notes = [...$('#tasteNotes').querySelectorAll('input:checked')].map((x) => x.value);
+  if (!notes.length) return toast('先勾選 1～3 篇你覺得寫得好的筆記');
+  tasteAsk('examples', e.target, () => api('/api/taste/examples', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes }) }));
+};
+$('#tasteFromFb').onclick = (e) => tasteAsk('insights', e.target, () => api('/api/taste/insights', { method: 'POST' }));
+$('#tasteCancel').onclick = () => { $('#tasteOut').hidden = true; };
+$('#tasteAdd').onclick = async () => {
+  const rules = $('#tasteRules').value.split('\n').map((x) => x.trim()).filter(Boolean);
+  try { const r = await api('/api/taste/append', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rules, kind: tasteKind }) }); toast(`已加入 ${r.added} 條規則，下次整理就會用上`); $('#tasteOut').hidden = true; }
+  catch (e) { toast('失敗：' + e.message); }
+};
 async function loadMail() {
   let r; try { r = await api('/api/mail'); } catch { return; }
   let t;
@@ -1747,11 +1871,11 @@ async function renderFc(a) {
   let f; try { f = await enApi(`/${a.id}/factcheck`); } catch { box.hidden = true; return; }
   if (!enArt || enArt.id !== a.id) return;
   box.hidden = false;
-  if (f.status === 'queued' || f.status === 'running') { box.innerHTML = '<div class="lbl">🔍 事實查核</div><p>⏳ Agent 正在上網查證你連到的研究筆記…</p>'; return enPoll(() => openArticle(a.id, true), 6000); }
+  if (f.status === 'queued' || f.status === 'running') { box.innerHTML = '<div class="lbl">🔍 事實查核</div><p>⏳ Agent 正在上網查證你連到的知識庫筆記…</p>'; return enPoll(() => openArticle(a.id, true), 6000); }
   if (f.status === 'error') { box.innerHTML = `<div class="lbl">🔍 事實查核</div><p>⚠️ ${esc(f.error || '沒有成功')}</p>`; return; }
-  if (!f.items.length) { box.innerHTML = '<div class="lbl">🔍 事實查核</div><p>沒有發現研究筆記和這篇文章衝突的說法。</p>'; return; }
+  if (!f.items.length) { box.innerHTML = '<div class="lbl">🔍 事實查核</div><p>沒有發現知識庫筆記和這篇文章衝突的說法。</p>'; return; }
   const open = f.items.some((i) => i.state === 'open' && i.applicable);
-  box.innerHTML = '<div class="lbl">🔍 事實查核</div><p class="hint left">下面是你的研究筆記和這篇文章說法不同的地方，Agent 上網查證過。按「套用」才會改筆記，舊版會先備份到 .trash。</p>' +
+  box.innerHTML = '<div class="lbl">🔍 事實查核</div><p class="hint left">下面是你的知識庫筆記和這篇文章說法不同的地方，Agent 上網查證過。按「套用」才會改筆記，舊版會先備份到 .trash。</p>' +
     f.items.map((i) => `<div class="enfc"><div><b>〈${esc(i.note)}〉</b> ${esc(FC_VERDICT[i.verdict] || '')}${i.state === 'applied' ? ' ✅ 已套用' : i.state === 'ignored' ? ' 不用改' : ''}</div>` +
       `<blockquote>${esc(i.claim)}</blockquote><p>文章說：${esc(i.article)}</p>${i.reason ? `<p class="hint left">${esc(i.reason)}</p>` : ''}` +
       (i.sources.length ? `<p class="hint left">來源：${i.sources.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https?:\/\//, '').slice(0, 40))}</a>`).join('、')}</p>` : '') +

@@ -1,5 +1,5 @@
 // Duplicate knowledge nodes: research notes (or gray links) that are the same concept as an existing research note,
-// e.g. 研究/PARA方法 vs 研究/PARA, or a gray [[CODE 框架]] while 研究/CODE方法 exists.
+// e.g. 知識庫/PARA方法 vs 知識庫/PARA, or a gray [[CODE 框架]] while 知識庫/CODE方法 exists.
 // The AI proposes pairs; nothing is merged until the user confirms one. A merge:
 //   - appends the duplicate's own content to the kept note (pointer-only notes add just their "跟你筆記的關係" part),
 //   - adds the duplicate's name to the kept note's `aliases:`,
@@ -28,7 +28,7 @@ function inventory({ vault, CFG, visibleRels }) {
   const visible = new Set(visibleRels.map((r) => r.toLowerCase()));
   const notes = [];
   for (const rel of visibleRels) {
-    if (!rel.startsWith('Claude-Notes/' + folder + '/')) continue;
+    if (!rel.startsWith('Claude-Notes/' + folder + '/') || rel.slice(('Claude-Notes/' + folder + '/').length).includes('/')) continue;   // direct children: 人物/ pages are not concept notes
     let md; try { md = fs.readFileSync(path.join(CFG.vault, ...rel.split('/')), 'utf8'); } catch { continue; }
     if (md.trim().length < 20) continue;
     notes.push({ rel, name: path.posix.basename(rel, '.md'), summary: summaryOf(md), pointer: pointerTarget(md) });
@@ -57,7 +57,7 @@ function lexicalPairs({ notes, gray }) {
 }
 
 function prompt({ notes, gray }, hints, dismissed) {
-  return `你是 Obsidian 筆記庫的圖書管理員。下面是「研究/」資料夾裡的名詞筆記（名稱：摘要），以及還沒有筆記的灰色連結名稱。
+  return `你是 Obsidian 筆記庫的圖書管理員。下面是「知識庫/」資料夾裡的名詞筆記（名稱：摘要），以及還沒有筆記的灰色連結名稱。
 請找出「其實是同一個概念、只是名稱不同」的重複節點（例如「PARA方法」和「PARA」、「第二大腦」和「Building a Second Brain」、中英文名稱、縮寫與全名）。
 
 判斷規則：

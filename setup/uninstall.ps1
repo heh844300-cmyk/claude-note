@@ -1,6 +1,6 @@
 ﻿<#
   Claude 筆記 解除安裝（Windows PowerShell 5.1）。由 uninstall.cmd 啟動。
-  你的筆記（Obsidian 筆記庫裡的 Claude-Notes、研究筆記）一律保留，不會刪除。
+  你的筆記（Obsidian 筆記庫裡的 Claude-Notes：筆記、知識庫）一律保留，不會刪除。
 
   測試用參數：
     -Answers <json 檔>   預先填好的答案（不互動）
